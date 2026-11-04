@@ -2,7 +2,7 @@
 
 **Feature**: `001-browser-remote-access` | **实现位置**: `packages/plugin/src/status.ts` + `packages/plugin/ui/`
 
-管理页只在**本机 loopback** 上可达（寄生在 DSH 已有 listener，`register({kind:"prefix", path:"/__anywhere/"})`）。浏览器远端入口**不暴露**这些接口。
+管理页只在**本机 loopback** 上可达：寄生在 DSH 已有 listener，经 `adapter.registerRoute("prefix", "/__anywhere/", …)` 注册——本文件中的任何端点都不得由其它模块直接调用 `webServer` 注册。浏览器远端入口**不暴露**这些接口。
 
 ## 1. 访问控制
 

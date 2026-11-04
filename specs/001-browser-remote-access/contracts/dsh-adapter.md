@@ -17,7 +17,19 @@ DSH 没有对外稳定的插件 API，本文件把"我们依赖了什么"写成�
 
 **不依赖**：不 `import` DSH 的 store、session、permission、UI 包；不读取 `app.asar`；不打补丁。
 
-## 2. 请求改写规则
+## 2. 适配层对外 API（其它模块只能通过这组函数接触 DSH）
+
+```text
+registerRoute(kind, path, handler) -> disposer   // 包装 webServer.register
+registerUpgradeRoute(path, handler) -> disposer  // 包装 webServer.registerUpgrade
+getLoopbackOrigin() -> string                    // 包装 webServer.getOrigin
+mintHostCookie() -> Promise<string>              // 包装 connection.authenticatedUrl + fetch
+```
+
+- `packages/plugin` 内除 `adapter.ts` 外**任何文件都不得** `import` `@deepseek-ai/*`，也不得直接持有 `webServer` / `connection` 对象。
+- 违反此约定的实现视为 Constitution I 的「交互未集中在单一适配层」（MUST 级）。
+
+## 3. 请求改写规则
 
 浏览器请求进入网关后，必须按下表改写再发往 `getOrigin()`：
 
@@ -40,7 +52,7 @@ DSH 没有对外稳定的插件 API，本文件把"我们依赖了什么"写成�
 | `Location` | 相对路径保留；若为绝对 `http://127.0.0.1:<port>/…` 则改写为相对路径 |
 | `Content-Length` | 保留（分片在协议层，不改变 HTTP 语义） |
 
-## 3. host cookie 的获取与续期
+## 4. host cookie 的获取与续期
 
 ```text
 启动 / 需要时：
@@ -54,19 +66,19 @@ DSH 没有对外稳定的插件 API，本文件把"我们依赖了什么"写成�
 - 重取最多 1 次/请求，避免放大故障。
 - cookie 明文只存在于内存，不写日志、不落盘（Constitution IV）。
 
-## 4. 升级（WebSocket）转发
+## 5. 升级（WebSocket）转发
 
 - 浏览器对 `/api/remote.mux` 的 upgrade → 网关向 `ws://127.0.0.1:<port>/api/remote.mux` 建本地 WS，携带改写后的 `Host`、`Origin`、注入的 host cookie。
 - 双向二进制/文本帧原样转发；`close` 码与原因双向传递。
 - 本地 WS 建不起来（ECONNREFUSED）→ 回 502 并提示"电脑端未运行"。
 
-## 5. index 与静态资源
+## 6. index 与静态资源
 
 - v1 **不改写 HTML**：假设原生 WebUI 在根路径代理下资源引用可用。
 - POC 若证伪（出现指向 `127.0.0.1:<port>` 的绝对 URL），回退方案：用 `webServer.tapIndex(transform)` 注入一段最小修正脚本（把绝对 loopback URL 改写为相对路径），并把它作为适配层的独立开关 `rewriteLoopbackUrls`。
 - 静态资源不参与任何改写；`Cache-Control` 原样透传。
 
-## 6. 版本探测（FR-027）
+## 7. 版本探测（FR-027）
 
 启动顺序：
 
@@ -77,7 +89,7 @@ DSH 没有对外稳定的插件 API，本文件把"我们依赖了什么"写成�
 
 探测结果写入 `state.json`，便于事后排障；不得因探测失败而静默半启动。
 
-## 7. 生命周期
+## 8. 生命周期
 
 | 时机 | 行为 |
 | --- | --- |
@@ -86,7 +98,7 @@ DSH 没有对外稳定的插件 API，本文件把"我们依赖了什么"写成�
 | 用户停用 | 断开隧道、停止接受新配对；已配对设备访问得到 503 |
 | 用户删除插件 | 状态目录保留（含设备凭证摘要）；文档说明如何清理 |
 
-## 8. 禁止事项（Constitution I）
+## 9. 禁止事项（Constitution I）
 
 - 不得修改 DSH 的任何包、源码或权限档位。
 - 不得新起 Host 进程去驱动同一会话（单写者租约）。

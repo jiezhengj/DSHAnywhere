@@ -79,18 +79,25 @@ packages/
 │   └── package.json
 ├── plugin/                     # @dsh-anywhere/plugin：Cordis 宿主插件（交付物 1）
 │   ├── src/
-│   │   ├── index.ts            # 插件入口：配置 schema、服务注册、生命周期
-│   │   ├── adapter.ts          # 唯一一处接触 DSH 内部契约的适配层
-│   │   ├── agent.ts            # 出站 WSS 隧道与重连、心跳
-│   │   ├── gateway.ts          # 帧 → loopback HTTP/WS 转发、栅栏改写
-│   │   ├── auth.ts             # 能力链接、设备凭证、轮换与撤销
+│   │   ├── index.ts            # 插件入口：装配、生命周期、停用/启用
+│   │   ├── adapter.ts          # 唯一接触 DSH 内部契约处；对外只暴露 4 个包装
+│   │   ├── config.ts           # 配置 schema 与首次启动状态
+│   │   ├── relay-url.ts        # 中转地址规范化与校验
+│   │   ├── agent.ts            # 出站 WSS 隧道、握手、心跳、退避重连
+│   │   ├── gateway.ts          # 帧 → loopback HTTP/WS 转发、栅栏改写、分片背压
+│   │   ├── auth.ts             # 设备凭证签发/校验、链接轮换
+│   │   ├── link.ts             # 能力链接生成/消费/过期
+│   │   ├── devices.ts          # 设备表（≤10 台）与撤销
+│   │   ├── stats.ts            # 访问计数与可访问率
+│   │   ├── pages.ts            # 面向浏览器的错误与提示页
+│   │   ├── status.ts           # 管理页路由与状态 API（经 adapter 注册）
+│   │   ├── errors.ts           # 统一错误码
 │   │   ├── store.ts            # state.json 读写、原子落盘、0600 权限
-│   │   ├── status.ts           # 本地管理页与 status API
 │   │   └── version.ts          # 契约版本探测
-│   ├── ui/                     # 管理页（纯 HTML/CSS/JS，无构建步骤）
+│   ├── ui/                     # 管理页（纯 HTML/CSS/JS，无构建步骤；含 qr.js）
 │   └── package.json
 └── relay/                      # @dsh-anywhere/relay：Worker + DO（交付物 2）
-    ├── src/{index.ts,relay-object.ts,route.ts}
+    ├── src/{index.ts,relay-object.ts,errors.ts}
     ├── wrangler.toml
     └── package.json
 tests/
@@ -98,10 +105,12 @@ tests/
 ├── integration/                # wrangler dev 下的中转 + 真实 Host 端到端脚本
 └── fixtures/
 docs/                           # 面向使用者的简体中文文档
-├── install.md                  # 装插件
+├── install.md                  # 装插件 + 首次配对与日常使用
 ├── relay-setup.md              # 建立中转（一条命令）
-├── pair.md                     # 配对与日常使用
-└── security.md                 # 凭证模型、轮换与撤销
+├── security.md                 # 威胁模型、凭证模型、轮换与撤销
+└── poc-findings.md             # POC 实测数字与验收记录（实现期产物）
+scripts/
+└── install.mjs                 # 一键安装（仅当补丁层无法自动写入时启用）
 ```
 
 **Structure Decision**: 选单仓 monorepo（Option 1 变体），因为本特性有两个必须一起发布的交付物：插件（随 DSH 安装）与中转（随使用者部署）。`protocol` 单独成包，确保两端对帧格式与版本常量只有一份真源；`wrangler.toml` 与 Worker 源码放在 `relay/`，使"部署一条命令"能直接指向仓库内目录，使用者也无需理解插件代码。

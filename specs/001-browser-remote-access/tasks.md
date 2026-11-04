@@ -53,7 +53,7 @@
 ### 插件基础
 
 - [ ] T012 [P] 实现状态存储 `packages/plugin/src/store.ts`：`schemaVersion` 校验、临时文件 + rename 原子写、文件 0600、损坏文件改名保留，测试 `tests/unit/store.test.ts`
-- [ ] T013 实现适配层骨架 `packages/plugin/src/adapter.ts`：能力断言（A1/A3/A4）、`getOrigin()`、`authenticatedUrl()` 换发 cookie 并在 401 时重取一次；测试 `tests/unit/adapter.test.ts`（用 fake webServer/connection）
+- [ ] T013 实现适配层骨架 `packages/plugin/src/adapter.ts`：能力断言（A1/A3/A4），并对外只暴露 `registerRoute()`/`registerUpgradeRoute()`/`getLoopbackOrigin()`/`mintHostCookie()` 四个包装（其它模块不得直接持有 `webServer`/`connection`），`mintHostCookie()` 在 401 时重取一次；测试 `tests/unit/adapter.test.ts`（用 fake webServer/connection）
 - [ ] T014 [P] 实现契约版本探测 `packages/plugin/src/version.ts`：四项能力断言 + `/api/remote.mux` 存在性探测（期望 401/403 而非 404），失败返回 `disabled` 与原因
 - [ ] T015 [P] 实现日志脱敏 `packages/plugin/src/redact.ts`：URL 中 `token`/`p/` 段与 cookie 值的掩码规则，测试 `tests/unit/redact.test.ts`
 
@@ -88,7 +88,7 @@
 - [ ] T026 [US1] 在适配层补 host cookie 注入与 401 重取逻辑 `packages/plugin/src/adapter.ts`（依赖 T013）
 - [ ] T027 [US1] 中转侧 HTTP 流复用与响应回写 `packages/relay/src/relay-object.ts`（依赖 T017）
 - [ ] T028 [US1] 中转侧 WS 流与 upgrade 白名单 `packages/relay/src/index.ts`：仅 `/api/remote.mux` 允许升级，其余 404 并关闭 socket
-- [ ] T029 [US1] 大响应体流式处理 `packages/plugin/src/gateway.ts`：边读边发，不整体缓冲；超 25 MiB 回 413
+- [ ] T029 [US1] 大响应体流式处理 `packages/plugin/src/gateway.ts`：下行边读边发、不整体缓冲、不设硬上限；上行请求体超 25 MiB 回 413
 - [ ] T030 [US1] 端到端验证脚本 `tests/integration/e2e-remote.mjs`：起 Host → 起 `wrangler dev` → 无头浏览器加载 → 断言输出到达并提交一条指令
 
 **Checkpoint**: US1 独立可交付——这就是 MVP。此时应立即用 [quickstart.md](quickstart.md) 的场景 4 记录结果。
@@ -111,10 +111,10 @@
 - [ ] T033 [US2] 插件配置 schema 与首次启动状态 `packages/plugin/src/config.ts`：`relayUrl` 可空，未配置时状态页显示"未配置中转"
 - [ ] T034 [US2] 中转地址规范化与校验 `packages/plugin/src/relay-url.ts`（`contracts/status-api.md §3` 的 `invalid-url` 错误码）
 - [ ] T035 [US2] 握手回传 `relayOrigin` 并据此构造配对入口 `packages/plugin/src/agent.ts`
-- [ ] T036 [US2] 管理页骨架 `packages/plugin/ui/index.html` + 路由 `packages/plugin/src/status.ts`（`register({kind:"prefix", path:"/__anywhere/"})`）
+- [ ] T036 [US2] 管理页骨架 `packages/plugin/ui/index.html`，路由经 `adapter.registerRoute("prefix", "/__anywhere/", …)` 注册：未配置中转时展示部署文档链接与完整命令（FR-001），已配置时展示状态
 - [ ] T037 [P] [US2] 零依赖二维码编码器 `packages/plugin/ui/qr.js`（≤ 8 KB），并在管理页渲染为 canvas
 - [ ] T038 [US2] 能力链接生成 `packages/plugin/src/link.ts`：32 字节随机、只存 SHA-256、`expiresAt = +10 分钟`、同时最多 1 条 active
-- [ ] T039 [US2] 配对端点 `/p/:token`：校验 → 下发设备凭证 → `303 Location: /`，并按 `contracts/relay-http.md §2` 设置 `no-store`/`no-referrer`
+- [ ] T039 [US2] 配对端点 `/p/:token`：校验（含设备数上限 10 台，超限拒绝并提示）→ 下发设备凭证 → `303 Location: /`，并按 `contracts/relay-http.md §2` 设置 `no-store`/`no-referrer`
 - [ ] T040 [US2] 部署文档 `docs/relay-setup.md`：含 `npx wrangler deploy --config relay/wrangler.toml`、账号授权、`workers.dev` 地址获取、`/__relay/health` 自检
 - [ ] T041 [US2] 安装文档 `docs/install.md`：`dsh plugin --profile desktop add` + 补丁层 insert 示例（按 T009 结论决定是否收敛为一条命令）
 - [ ] T042 [US2] 若 T009 证明需手工改补丁层，则提供一键安装脚本 `scripts/install.mjs`；并把首次可用计时结果写入 `docs/poc-findings.md`
@@ -140,7 +140,7 @@
 - [ ] T046 [US3] 设备凭证签发与每请求实时校验 `packages/plugin/src/auth.ts`：无缓存查表，撤销即拒
 - [ ] T047 [US3] 浏览器 cookie 下发 `__Host-dshanywhere`（`HttpOnly; Secure; SameSite=Strict; Path=/`，无 `Domain`），仅 TLS 下 `Secure`
 - [ ] T048 [US3] 多设备并存与并发验证脚本 `tests/integration/multi-device.mjs`（≥ 2 台同时访问 5 分钟互不中断）
-- [ ] T049 [US3] 隐私模式/清 cookie 的统一 401 提示页 `packages/plugin/src/pages.ts`，文案与"链接无效"页区分
+- [ ] T049 [US3] 隐私模式/清 cookie 的统一 401 提示页 `packages/plugin/src/pages.ts`，文案与"链接无效"页区分；并记录连续 5 天的重复配对次数以验证 SC-004
 
 **Checkpoint**: 日常使用零操作；多设备可并存
 
@@ -161,7 +161,7 @@
 
 - [ ] T052 [US4] 实现轮换 `packages/plugin/src/auth.ts`：递增 `linkEpoch`、清空未使用链接、不动设备表
 - [ ] T053 [US4] 实现单设备撤销 `packages/plugin/src/devices.ts`：置 `revoked` 并同步移除内存查表
-- [ ] T054 [US4] 管理页与状态 API 的轮换/撤销端点 `packages/plugin/src/status.ts`（`contracts/status-api.md §3`）
+- [ ] T054 [US4] 状态 API 的全部写操作端点（`POST /api/relay`、`/api/link`、`/api/rotate`、`/api/devices/:id/revoke`、`/api/enable|disable`）`packages/plugin/src/status.ts`，路由经 `adapter.registerRoute()`（`contracts/status-api.md §3`）
 - [ ] T055 [US4] 管理页按钮与二次确认 `packages/plugin/ui/index.html`、`packages/plugin/ui/ui.js`：撤销最后一台设备时提示 `no-active-device`
 - [ ] T056 [US4] 凭证零外泄审计 `tests/unit/redact.test.ts` 补充：日志、错误页、代理日志三处检索不到令牌明文
 - [ ] T057 [US4] 安全文档 `docs/security.md`：威胁模型、使用自建中转、**明确不含端到端加密**、轮换与撤销操作
@@ -172,7 +172,7 @@
 
 ## Phase 7: User Story 5 - 状态可见与断线自愈（P5）
 
-**Goal**: 状态页展示连接/地址/设备/统计；六类故障可区分；断线 30 秒内自愈
+**Goal**: 状态页展示连接/地址/设备/统计；远端四类与桌面端两类故障各自可区分；断线 30 秒内自愈
 
 **Independent Test**: 分别制造网络切换、中转重启、桌面端退出、额度受限，确认恢复时间与提示文案
 
@@ -184,8 +184,8 @@
 ### Implementation for US5
 
 - [ ] T060 [US5] 连接状态机与重连调优 `packages/plugin/src/agent.ts`：`idle/connecting/connected/reconnecting/failed` 与失败原因分类（DNS/证书/401/版本）
-- [ ] T061 [US5] 六类错误页与分类映射 `packages/plugin/src/pages.ts`、`packages/relay/src/errors.ts`，按 `contracts/relay-http.md §5`
-- [ ] T062 [US5] 状态 API 主接口 `GET /__anywhere/api/status` `packages/plugin/src/status.ts`
+- [ ] T061 [US5] 错误页与分类映射 `packages/plugin/src/pages.ts`、`packages/relay/src/errors.ts`：远端可渲染的四类（电脑端未运行/连接已中断/超时/凭证无效）+ 仅桌面端状态页呈现的两类（中转不可达/额度受限），按 `contracts/relay-http.md §5` 的「呈现位置」列
+- [ ] T062 [US5] 状态 API 主接口 `GET /__anywhere/api/status` `packages/plugin/src/status.ts`（路由经 `adapter.registerRoute()`）
 - [ ] T063 [US5] 访问统计 `packages/plugin/src/stats.ts`：只记计数与分类，不记 URL/正文
 - [ ] T064 [US5] 管理页状态区 `packages/plugin/ui/index.html`、`packages/plugin/ui/ui.js`：连接状态、地址、二维码、设备列表、最近访问、可访问率
 - [ ] T065 [US5] 把恢复时间与可访问率实测写入 `docs/poc-findings.md`
