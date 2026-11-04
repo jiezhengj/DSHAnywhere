@@ -1,4 +1,5 @@
 import {
+  FrameFlags,
   FrameType,
   MAX_FRAME_BYTES,
   REQUEST_TIMEOUT_MS,
@@ -7,7 +8,7 @@ import {
   encodeFrame,
   encodeJson,
 } from "../../protocol/src/index.ts";
-import type { ErrorCode, Frame, HttpRequestHead, HttpResponseHead } from "../../protocol/src/index.ts";
+import type { ErrorCode, Frame, HttpRequestHead, HttpResponseHead, WsOpen } from "../../protocol/src/index.ts";
 
 export interface AgentTransport {
   send(frame: Uint8Array): void;
@@ -18,6 +19,13 @@ export interface HttpSink {
   head(status: number, headers: Record<string, string>): void;
   body(chunk: Uint8Array): void;
   end(): void;
+  fail(code: ErrorCode): void;
+}
+
+export interface WsSink {
+  open(): void;
+  data(chunk: Uint8Array, isText: boolean): void;
+  close(code: number, reason: string): void;
   fail(code: ErrorCode): void;
 }
 
@@ -43,6 +51,7 @@ export class RelayBridge {
   readonly #windowBytes: number;
   readonly #maxFrameBytes: number;
   readonly #streams = new Map<number, StreamState>();
+  readonly #wsStreams = new Map<number, WsSink>();
   #nextStreamId = 1;
 
   constructor(transport: AgentTransport, options: BridgeOptions = {}) {
@@ -75,6 +84,24 @@ export class RelayBridge {
     return streamId;
   }
 
+  /** 打开一条 WS 透传流（浏览器 ↔ agent 的 /api/remote.mux） */
+  openWs(open: WsOpen, sink: WsSink): number {
+    const streamId = this.#nextStreamId++;
+    this.#wsStreams.set(streamId, sink);
+    this.#send(FrameType.WS_OPEN, streamId, encodeJson(open));
+    return streamId;
+  }
+
+  /** 浏览器侧数据帧 */
+  sendWsData(streamId: number, chunk: Uint8Array, isText = false): void {
+    this.#send(FrameType.WS_DATA, streamId, chunk, isText ? FrameFlags.WS_TEXT : 0);
+  }
+
+  closeWs(streamId: number, code: number, reason: string): void {
+    this.#send(FrameType.WS_CLOSE, streamId, encodeJson({ code, reason }));
+    this.#wsStreams.delete(streamId);
+  }
+
   /** 收到 agent 帧；返回 false 表示该帧不被中转接受（调用方应关闭连接） */
   onFrame(frame: Frame): boolean {
     const stream = this.#streams.get(frame.streamId);
@@ -104,6 +131,28 @@ export class RelayBridge {
         this.#settle(frame.streamId, (s) => s.sink.fail(code));
         return true;
       }
+      case FrameType.WS_OPEN_ACK: {
+        const ack = JSON.parse(new TextDecoder().decode(frame.payload)) as { ok?: boolean; reason?: string };
+        const sink = this.#wsStreams.get(frame.streamId);
+        if (!ack.ok) {
+          sink?.fail((ack.reason as ErrorCode) ?? "upstream-unreachable");
+          this.#wsStreams.delete(frame.streamId);
+        } else {
+          sink?.open();
+        }
+        return true;
+      }
+      case FrameType.WS_DATA: {
+        const sink = this.#wsStreams.get(frame.streamId);
+        sink?.data(frame.payload, (frame.flags & FrameFlags.WS_TEXT) !== 0);
+        return true;
+      }
+      case FrameType.WS_CLOSE: {
+        const payload = JSON.parse(new TextDecoder().decode(frame.payload)) as { code?: number; reason?: string };
+        this.#wsStreams.get(frame.streamId)?.close(payload.code ?? 1000, payload.reason ?? "");
+        this.#wsStreams.delete(frame.streamId);
+        return true;
+      }
       case FrameType.PING:
         this.#send(FrameType.PONG, 0, new Uint8Array());
         return true;
@@ -121,6 +170,8 @@ export class RelayBridge {
       state.sink.fail(code);
     }
     this.#streams.clear();
+    for (const sink of this.#wsStreams.values()) sink.fail(code);
+    this.#wsStreams.clear();
   }
 
   #settle(streamId: number, done: (state: StreamState) => void): void {

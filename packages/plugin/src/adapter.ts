@@ -95,9 +95,9 @@ export class Adapter {
    * 换取宿主自身的会话 cookie：GET authenticatedUrl(origin) 期望 303，
    * 从 Set-Cookie 取出 `dsh-auth-*` 值，供转发时以 Cookie 头发送。
    */
-  async mintHostCookie(): Promise<string> {
+  async mintHostCookie(force = false): Promise<string> {
     const cached = this.#cookie;
-    if (cached && cached.expiresAt > this.#now()) return cached.value;
+    if (!force && cached && cached.expiresAt > this.#now()) return cached.value;
 
     const url = this.#connection.authenticatedUrl(this.getLoopbackOrigin());
     const response = await this.#fetch(url, { method: "GET", redirect: "manual" });

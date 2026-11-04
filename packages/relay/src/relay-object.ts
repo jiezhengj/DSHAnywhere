@@ -31,7 +31,50 @@ export class RelayObject {
 
   async fetch(request: Request): Promise<Response> {
     const isAgent = request.headers.get("x-dsh-agent") === "1";
-    return isAgent ? this.#handleAgent(request) : this.#handleBrowser(request);
+    if (isAgent) return this.#handleAgent(request);
+    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      return this.#handleBrowserWs(request);
+    }
+    return this.#handleBrowser(request);
+  }
+
+  /** 浏览器侧的 WS 透传：与 agent 的 /api/remote.mux 一一对应 */
+  #handleBrowserWs(request: Request): Response {
+    const bridge = this.#bridge;
+    if (!bridge) return errorResponse("agent-not-connected");
+
+    const pair = new WebSocketPair();
+    const client = pair[0] as WebSocket;
+    const server = pair[1] as WebSocket;
+    this.#state.acceptWebSocket?.(server);
+
+    const headers: Record<string, string> = {};
+    request.headers.forEach((value, name) => {
+      headers[name] = value;
+    });
+
+    const url = new URL(request.url);
+    const streamId = bridge.openWs(
+      { path: url.pathname + url.search, headers },
+      {
+        open: () => {},
+        data: (chunk, isText) => server.send(isText ? new TextDecoder().decode(chunk) : chunk),
+        close: (code, reason) => server.close(code, reason),
+        fail: () => server.close(1011, "upstream failure"),
+      },
+    );
+
+    server.addEventListener("message", (event: MessageEvent) => {
+      const data = event.data;
+      const bytes = typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data as ArrayBuffer);
+      bridge.sendWsData(streamId, bytes, typeof data === "string");
+    });
+    server.addEventListener("close", (event: unknown) => {
+      const ev = event as { code?: number; reason?: string };
+      bridge.closeWs(streamId, ev.code ?? 1000, ev.reason ?? "");
+    });
+
+    return new Response(null, { status: 101, webSocket: client });
   }
 
   #handleAgent(request: Request): Response {

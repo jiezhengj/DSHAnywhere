@@ -5,6 +5,13 @@ export interface RelayEnv {
   DSH_INSTALL_ID?: string;
 }
 
+/** 允许透传给 agent 的 WebSocket 路径：v1 只有实时通道 */
+export const WS_PASSTHROUGH_PATHS = new Set(["/api/remote.mux"]);
+
+export function isAllowedUpgrade(pathname: string): boolean {
+  return WS_PASSTHROUGH_PATHS.has(pathname);
+}
+
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -47,9 +54,14 @@ export async function handleRequest(request: Request, env: RelayEnv): Promise<Re
     return Response.json({ ok: true, protocolVersion: 1 });
   }
 
+  const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
   const isAgent = url.pathname === "/__dsh_agent";
-  if (isAgent && request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+  if (isAgent && !upgrade) {
     return errorResponse("protocol");
+  }
+  // 未列入白名单的升级请求直接 404：DSH 的升级路由只做精确匹配
+  if (upgrade && !isAgent && !isAllowedUpgrade(url.pathname)) {
+    return new Response("not found", { status: 404 });
   }
 
   const installId = resolveInstallId(url, env);

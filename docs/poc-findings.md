@@ -63,6 +63,18 @@ dsh: warning: <pkg> declares no dsh.bundle — installed as a plain dependency, 
 - **T042 的一键安装脚本取消**：已改为在 `packages/plugin` 声明 bundle（已完成）。
 - 待验证：包入口目前是 TS（`exports: ./src/index.ts`），DSH 挂载时能否直接加载 TS 尚未验证；若不能，需加一步构建产物（TS → JS），这会加一条命令或由 `postinstall` 完成。**这是 SC-001 的下一个风险点。**
 
+## 本机端到端链路（US1，T021–T030）
+
+**已验证**：`tests/integration/e2e-remote.test.ts` 在单进程内跑通「中转 RelayBridge ↔ 帧协议 ↔ 网关 Gateway ↔ loopback HTTP」全链路，覆盖：
+
+- GET 请求经中转到达 loopback 并原样返回；
+- 上行请求体（含中文）完整送达；
+- 200 KB 大响应体经 64 KiB 分片后完整重组；
+- 浏览器侧 cookie 被替换为宿主 `dsh-auth-*` cookie；
+- loopback 返回 401 时换发 cookie 重试一次并成功。
+
+**未验证（需真机环境）**：真实 DSH WebUI 的首屏资源加载、`/api/remote.mux` 实时流、`wrangler dev`/线上 Worker 的 WebSocket 行为。这些依赖真实会话与 Cloudflare 部署，见 T073。
+
 ## POC-1：请求密度与响应体量（T007）
 
 **结论：未开始。** 需要真实长任务会话 + 流量采样，尚未执行。

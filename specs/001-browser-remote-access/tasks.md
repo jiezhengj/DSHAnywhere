@@ -77,19 +77,19 @@
 
 ### Tests for US1
 
-- [ ] T021 [P] [US1] 断言栅栏改写：`tests/unit/rewrite.test.ts` 覆盖 `Host`/`Origin`/`Referer` 改写、`Cookie` 替换、`sec-fetch-site` 与 `cf-*` 剥离
-- [ ] T022 [P] [US1] 断言分片与背压：`tests/unit/flow.test.ts` 覆盖 64 KiB 分片、窗口耗尽后暂停、`FLOW_CREDIT` 恢复、超 2× 窗口触发 `backpressure`
-- [ ] T023 [P] [US1] 集成往返：`tests/integration/http-roundtrip.mjs` 用本地 WS 替身走完 `HTTP_REQUEST_HEAD/BODY/END` → `HTTP_RESPONSE_HEAD/BODY/END`
+- [x] T021 [P] [US1] 断言栅栏改写：`tests/unit/rewrite.test.ts` 覆盖 `Host`/`Origin`/`Referer` 改写、`Cookie` 替换、`sec-fetch-site` 与 `cf-*` 剥离
+- [x] T022 [P] [US1] 断言分片与背压：`tests/unit/flow.test.ts` 覆盖 64 KiB 分片、窗口耗尽后暂停、`FLOW_CREDIT` 恢复、超 2× 窗口触发 `backpressure`
+- [x] T023 [P] [US1] 集成往返：`tests/integration/http-roundtrip.mjs` 用本地 WS 替身走完 `HTTP_REQUEST_HEAD/BODY/END` → `HTTP_RESPONSE_HEAD/BODY/END`
 
 ### Implementation for US1
 
-- [ ] T024 [US1] 实现网关 HTTP 流转发 `packages/plugin/src/gateway.ts`：帧 → 对 `getOrigin()` 的 `fetch`，头改写按 `contracts/dsh-adapter.md §2`
-- [ ] T025 [US1] 实现网关 WS 代理 `packages/plugin/src/gateway.ts`：仅 `/api/remote.mux`，双向转发二进制/文本帧与 close 码
-- [ ] T026 [US1] 在适配层补 host cookie 注入与 401 重取逻辑 `packages/plugin/src/adapter.ts`（依赖 T013）
-- [ ] T027 [US1] 中转侧 HTTP 流复用与响应回写 `packages/relay/src/relay-object.ts`（依赖 T017）
-- [ ] T028 [US1] 中转侧 WS 流与 upgrade 白名单 `packages/relay/src/index.ts`：仅 `/api/remote.mux` 允许升级，其余 404 并关闭 socket
-- [ ] T029 [US1] 大响应体流式处理 `packages/plugin/src/gateway.ts`：下行边读边发、不整体缓冲、不设硬上限；上行请求体超 25 MiB 回 413
-- [ ] T030 [US1] 端到端验证脚本 `tests/integration/e2e-remote.mjs`：起 Host → 起 `wrangler dev` → 无头浏览器加载 → 断言输出到达并提交一条指令
+- [x] T024 [US1] 实现网关 HTTP 流转发 `packages/plugin/src/gateway.ts`：帧 → 对 `getOrigin()` 的 `fetch`，头改写按 `contracts/dsh-adapter.md §2`
+- [x] T025 [US1] 实现网关 WS 代理 `packages/plugin/src/gateway.ts`：仅 `/api/remote.mux`，双向转发二进制/文本帧与 close 码
+- [x] T026 [US1] 在适配层补 host cookie 注入与 401 重取逻辑 `packages/plugin/src/adapter.ts`（依赖 T013）
+- [x] T027 [US1] 中转侧 HTTP 流复用与响应回写 `packages/relay/src/relay-object.ts`（依赖 T017）
+- [x] T028 [US1] 中转侧 WS 流与 upgrade 白名单 `packages/relay/src/index.ts`：仅 `/api/remote.mux` 允许升级，其余 404 并关闭 socket
+- [x] T029 [US1] 大响应体流式处理 `packages/plugin/src/gateway.ts`：下行边读边发、不整体缓冲、不设硬上限；上行请求体超 25 MiB 回 413
+- [x] T030 [US1] 端到端验证脚本 `tests/integration/e2e-remote.test.ts`：起 Host → 起 `wrangler dev` → 无头浏览器加载 → 断言输出到达并提交一条指令
 
 **Checkpoint**: US1 独立可交付——这就是 MVP。此时应立即用 [quickstart.md](quickstart.md) 的场景 4 记录结果。
 
