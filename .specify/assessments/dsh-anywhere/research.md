@@ -56,6 +56,30 @@
 - [NEEDS CLARIFICATION: "生成中转部署物"是内置向导（含 API Token 流程）还是外置文档 + 一条命令。]
 - [NEEDS CLARIFICATION: 成功指标（首次可用时间、日常免操作率、断线恢复时间）尚未定义，留给 define 阶段。]
 
+## 附：取证明细与可复现步骤
+
+**桌面版机制要点**（均为本地取证，2026-11-04）：
+
+- 桌面 Host 以 `--no-open --host 127.0.0.1 --port 0` 启动：只监听回环、端口随机；窗口经自定义 scheme 加载同一前端，其余路径转发给 Host。
+- 认证：进程启动令牌经 `GET /?token=…`（仅根路径）换 303 + 签名 cookie `dsh-auth-<hash>`（绑定 hostname+port，HttpOnly，SameSite=Strict，仅 TLS 时 Secure，30 天）；`/connect?token=…&interactions=answer|none` 为 API 专用、不设浏览器 cookie。
+- 信任栅栏：`Host` 必须为 loopback / 监听 IP / `trustedHosts`；`Origin` 必须同源；`sec-fetch-site: cross-site` 拒绝；未认证 401，栅栏失败 403。
+- 插件可用的宿主能力：`register({kind:"exact"|"prefix",path,handler})`、`registerUpgrade({path,handler})`（同一路径唯一）、`registerFallback`（全局唯一）、`collectIndexInjections()`、`renderIndex(html)`、`protocol` / `port` / `getOrigin()`。
+- 认证复用：`authenticatedUrl(baseUrl)`、`authorizeIndex(req,res,secure)`、`createPeer({principal,interactions})`。
+- 插件安装：`dsh plugin --profile <name> add <pkg>`（转发 pnpm）；用户补丁层 `~/.dsh/profiles/<name>/cordis.patch.yml` 可 insert 条目。
+
+**asar 归档取文件方法**：开头 8 字节 size pickle、随后 4 字节 header 字符串长度、再是 JSON 头；文件数据基址 = `8 + <header 长度>`（本机该版本 header 长度为 4,760,404）。按相对路径从 JSON 头取 `offset`/`size`，再从归档中按区间切出即可，例如：
+
+```powershell
+param($Rel,$Out)
+$asar="C:\Users\<you>\AppData\Local\Programs\DeepSeek Harness\resources\app.asar"
+$t=Get-Content -Raw "$env:TEMP\dsh-asar-header.json"; $obj=$t.Substring($t.IndexOf('{')) | ConvertFrom-Json
+$node=$obj.files; foreach($p in ($Rel -split '/')){ $node=$node.$p; if($node.files){ $node=$node.files } }
+$fs=[IO.File]::OpenRead($asar); $fs.Position=[int64]8+[int64]4760404+[int64]$node.offset
+$buf=New-Object byte[] ([int]$node.size); $read=0
+while($read -lt $buf.Length){ $n=$fs.Read($buf,$read,$buf.Length-$read); if($n -le 0){break}; $read+=$n }
+$fs.Close(); [IO.File]::WriteAllBytes($Out,$buf)
+```
+
 ## 来源
 
 - 本地安装取证：`%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\app.asar`（本地文件，policy: 本地读取，未联网）
