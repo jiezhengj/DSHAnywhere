@@ -179,9 +179,37 @@ test("stop 后不再重连", () => {
   assert.equal(h.sockets.length, 1);
 });
 
-test("未连接时 send 抛错", () => {
+test("未连接时 send 返回 false 而不抛错", () => {
   const h = harness();
-  assert.throws(() => h.tunnel.send({ type: FrameType.PING, streamId: 0, flags: 0, payload: new Uint8Array() }), /未连接/);
+  assert.equal(h.tunnel.send({ type: FrameType.PING, streamId: 0, flags: 0, payload: new Uint8Array() }), false);
+});
+
+test("发送瞬间连接被关闭时不抛异常", () => {
+  const h = harness();
+  h.tunnel.start();
+  const socket = h.sockets[0]!;
+  socket.fire("open");
+  socket.send = () => {
+    throw new Error("Sent before connected.");
+  };
+  assert.equal(h.tunnel.send({ type: FrameType.PING, streamId: 0, flags: 0, payload: new Uint8Array() }), false);
+});
+
+test("二进制帧以 Blob 交付时也能解析", async () => {
+  let origin = "";
+  const h = harness({ onHelloAck: (ack) => (origin = ack.relayOrigin) });
+  h.tunnel.start();
+  const socket = h.sockets[0]!;
+  socket.fire("open");
+  const ack = encodeFrame({
+    type: FrameType.RELAY_HELLO_ACK,
+    streamId: 0,
+    flags: 0,
+    payload: encodeJson({ protocolVersion: 1, relayOrigin: "https://blob.example" }),
+  });
+  socket.fire("message", { data: new Blob([ack as unknown as BlobPart]) });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(origin, "https://blob.example", "Blob 帧应被解析出 ACK");
 });
 
 test("坏帧导致连接关闭", () => {

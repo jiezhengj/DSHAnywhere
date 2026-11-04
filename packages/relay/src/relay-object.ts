@@ -20,6 +20,27 @@ interface PendingHead {
  * 每个安装一个实例：持有 agent 的隧道连接，并把浏览器请求复用到该连接上。
  * 运行时由 workerd 提供 WebSocketPair / Request / Response。
  */
+/** 升级请求可能被上游 sanitize 或 Cloudflare 剥掉 hop-by-hop 头，因此多信号判断 */
+function isUpgradeRequest(request: Request): boolean {
+  return (
+    request.headers.get("x-dsh-upgrade") === "1" ||
+    request.headers.get("sec-websocket-key") !== null ||
+    (request.headers.get("connection") ?? "").toLowerCase().includes("upgrade") ||
+    request.headers.get("upgrade")?.toLowerCase() === "websocket"
+  );
+}
+
+export const AGENT_PATH = "/__dsh_agent";
+
+/**
+ * 接收 server 端 socket。
+ * 注意：不能与 hibernation 的 acceptWebSocket 混用——一旦 acceptWebSocket，
+ * 消息只会进 webSocketMessage()，addEventListener("message") 收不到任何东西（实测握手静默失败）。
+ */
+function acceptSocket(socket: WebSocket): void {
+  (socket as unknown as { accept(): void }).accept();
+}
+
 export class RelayObject {
   readonly #state: DurableObjectState;
   #agent: WebSocket | null = null;
@@ -30,9 +51,12 @@ export class RelayObject {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const isAgent = request.headers.get("x-dsh-agent") === "1";
+    // 升级请求按原样转交时没有标记头，用路径判定 agent 通道
+    const isAgent =
+      request.headers.get("x-dsh-agent") === "1" ||
+      new URL(request.url).pathname === AGENT_PATH;
     if (isAgent) return this.#handleAgent(request);
-    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    if (isUpgradeRequest(request)) {
       return this.#handleBrowserWs(request);
     }
     return this.#handleBrowser(request);
@@ -46,7 +70,7 @@ export class RelayObject {
     const pair = new WebSocketPair();
     const client = pair[0] as WebSocket;
     const server = pair[1] as WebSocket;
-    this.#state.acceptWebSocket?.(server);
+    acceptSocket(server);
 
     const headers: Record<string, string> = {};
     request.headers.forEach((value, name) => {
@@ -78,7 +102,7 @@ export class RelayObject {
   }
 
   #handleAgent(request: Request): Response {
-    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    if (!isUpgradeRequest(request)) {
       return errorResponse("protocol");
     }
     if (this.#agent) {
@@ -88,7 +112,7 @@ export class RelayObject {
     const pair = new WebSocketPair();
     const client = pair[0] as WebSocket;
     const server = pair[1] as WebSocket;
-    this.#state.acceptWebSocket?.(server);
+    acceptSocket(server);
     this.#agent = server;
 
     let helloSeen = false;

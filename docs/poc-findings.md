@@ -172,13 +172,83 @@ ELECTRON_RUN_AS_NODE=1 "<app>" "<bin.js>" --profile dshanywhere-cold --port 5099
 **风险点在别处**：如果将来 DSH 引入 URL 路由或把入口挂到子路径，相对资源路径会失效；届时
 需要在 `adapter.ts` 增加 `rewriteLoopbackUrls` 开关（已在风险表中登记），而不是现在提前实现。
 
-## POC-1：请求密度与响应体量（T007）
+## POC-5：真实 Cloudflare 中转部署与端到端联调（2026-11-04 实测）
 
-**结论：未开始。** 需要真实长任务会话 + 流量采样，尚未执行。
+**已实测通过**：中转按文档步骤部署到 `https://dsh-anywhere-relay.<账号子域>.workers.dev`（使用者自己的账号；本机 `cf` 已登录而 `wrangler` 未登录，部署时把 `cf` 的 OAuth token 通过 `CLOUDFLARE_API_TOKEN` 传给 wrangler，未把任何凭据写入仓库）。
 
-## POC-2：代理下的资源路径（T008）
+实测结论与数字：
 
-**结论：未开始。** 需要临时 Host + `wrangler dev` + 无头浏览器，尚未执行。
+| 项目 | 结果 |
+| --- | --- |
+| `GET /__relay/health` | `200 {"ok":true,"protocolVersion":1}` |
+| 无电脑端在线时访问入口 | `503` + 「电脑端未运行」页（远端可见、无堆栈） |
+| 非白名单 WS 升级路径 | `404`（与契约一致） |
+| 真实页面加载（浏览器 1280×633） | 侧边栏、会话列表、工作区、输入框全部渲染，可点击切换会话 |
+| 首屏 HTML | 41 042 B，1.5–2.3 s（经本机代理出口） |
+| 页面总请求 | 12 个（1 HTML + 2 组合包 + 3 静态资源 + 若干 `/api/*`） |
+| 单响应体量峰值 | **8 937 KB**（`/plugins/??...` 组合包），其次 2 444 KB、919 KB、724 KB |
+| 一次完整页面加载总下行 | **约 13.3 MB** |
+| 941 KB 主包耗时 | 4.2 s（23:5x）→ 20.8 s（跨零点复核），说明吞吐随出口网络波动很大 |
+| 实时通道 `/api/remote.mux` | 经 Worker→DO→隧道→loopback 打通，空闲保持 45 s 不掉线 |
+
+### 真实部署暴露的 6 个"只有上线才会出现"的问题（均已修复并加了测试）
+
+1. **`Upgrade` 头被 Cloudflare 剥掉**：Worker 里 `request.headers.get("upgrade")` 恒为 `null`，
+   只剩 `connection: Upgrade` 和 `sec-websocket-*`。原来的升级判断永远为假 → 代理永远拿不到 WS。
+   改为多信号判断（`sec-websocket-key` / `connection` / 显式标记）。
+2. **升级请求不能重新包装**：`new Request(url, {...})` 转发给 DO 会丢失升级语义，客户端收到 1006。
+   改成升级请求原样 `stub.fetch(request)`。
+3. **`acceptWebSocket()` 与 `addEventListener` 不能混用**：一旦走 hibernation API，
+   `message` 事件永远不触发，表现为"握手静默失败"。改用 `server.accept()`。
+4. **浏览器把二进制帧当 Blob 交付**：Node/undici 的 `WebSocket` 默认 `binaryType = "blob"`，
+   直接 `new Uint8Array(blob)` 会解析失败并被当成坏帧断开。显式设 `binaryType = "arraybuffer"` 并兼容 Blob。
+5. **`send()` 在断连瞬间抛 `InvalidStateError: Sent before connected`**：异常发生在事件回调里会带崩宿主进程。
+   改为返回布尔值，网关侧捕获后丢弃该帧。
+6. **非法 WS 关闭码会抛 `InvalidAccessError`**：DSH/上游可能给出 0 或 1006，
+   `ws.close(0)` 直接抛异常。统一用 `closeSafely` 归一化到合法码。
+
+### 协议层实测修正
+
+- **DSH 实时通道只接受文本帧**：把文本当二进制转发会被 `1003 text messages required` 拒绝。
+  `WS_DATA` 的 `WS_TEXT` 标记必须在双向都保留（已加测试）。
+- **单条 WS 消息会超过 64 KB**：会话历史快照一次可达数百 KB，而 `MAX_FRAME_BYTES` 只该约束 HTTP 分片。
+  新增 `MAX_WS_MESSAGE_BYTES = 1 MiB`（Cloudflare Workers 的 WS 单消息上限）并让 `WS_DATA` 走这个上限；
+  超过 1 MiB 的历史快照目前会被拒绝，属于已知限制。
+- **WebSocket 握手头必须剥离**：把浏览器的 `sec-websocket-key/version/extensions` 透传给 loopback 会造成重复键、
+  握手失败，`rewriteRequestHeaders` 已把这些头加入丢弃列表。
+
+### 部署运维发现
+
+- **Durable Object 会继续跑旧代码**：重新 `deploy` 后，已存在的 DO 实例仍执行创建时的脚本版本，
+  表现为"改了代码但行为没变"。排查时要么换 `installId` 验证新实例，要么等实例被驱逐。
+- `cf deploy` 需要新的 `cloudflare.config.ts`（实验性新配置）；经典 `wrangler.toml` 项目仍建议用
+  `npx wrangler deploy`，文档里的配置路径已修正为 `packages/relay/wrangler.toml`。
+
+### 仍未实测（不编造）
+
+- 手机真实扫码配对进 DSH WebUI（需要手机与真实浏览器会话）。
+- 真实配对链路经中转的完整流程（本次联调用的是网关侧直连，绕过配对，只验证了转发与实时通道）。
+- 在 4G/Wi-Fi 切换下的秒级恢复数据。
+- 13 MB 首屏在移动网络下的首屏时间；桌面端经代理出口实测已达 10–20 s，移动网络预计更慢，
+  与"速度由网络环境和 Worker 可连通性决定"的既定结论一致。
+
+## POC-1：请求密度与响应体量（T007，2026-11-04 实测）
+
+用真实 DSH WebUI 经真实中转加载，采集到的数据（与 spec 的 R1/R5 假设对照）：
+
+| 指标 | 实测 | 对 R1/R5 的意义 |
+| --- | --- | --- |
+| 首屏请求数 | 12 | 原假设"首屏 ~15 个请求"量级正确 |
+| 首屏总下行 | 约 13.3 MB | **远高于 R5 假设的 ~1 MB**：DSH 的两个 `/plugins/??...` 组合包合计 ~11.4 MB |
+| 单响应最大 | 8 937 KB | 单请求可达 9 MB，是首屏慢的主因，且只能靠浏览器缓存消化 |
+| 实时通道 | 1 条常驻 WS（`/api/remote.mux`），空闲 45 s 无非预期流量 | 长任务的流量都在 WS 上，HTTP 请求密度不会随任务时长增长 |
+| 心跳开销 | 25 s 一次 PING，可忽略 | — |
+
+结论：
+1. 中转侧不需要为"长任务请求密度"做特殊设计——HTTP 请求数在首屏之后基本不再增长，任务进展全部走实时通道。
+2. 首屏体量才是瓶颈：13 MB 在慢网下需要 10–20 s（桌面端实测），移动网络会更久。
+   缓解手段是浏览器缓存（组合包的 `&rev=` 带版本号，可长期缓存），而不是压缩通道。
+3. 8 937 KB 的响应验证了「大响应必须分片 + 窗口流控」这一设计是必要的，且现有实现能跑通。
 
 ## 已完成的工程基线
 

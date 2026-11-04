@@ -101,3 +101,33 @@ test("isAllowedUpgrade 只放行 mux 路径", () => {
   assert.equal(isAllowedUpgrade("/api/remote.mux"), true);
   assert.equal(isAllowedUpgrade("/api/other"), false);
 });
+
+test("Cloudflare 剥掉 Upgrade 头时仍能识别升级请求", async () => {
+  const h = env();
+  const res = await handleRequest(
+    new Request("https://relay.example/api/remote.mux", {
+      headers: { connection: "Upgrade", "sec-websocket-key": "abc", "sec-websocket-version": "13" },
+    }),
+    h.env,
+  );
+  assert.equal(h.seen.length, 1, "升级请求应转发到 DO");
+  // 升级请求必须原样转交，否则会丢失升级语义
+  assert.equal(h.seen[0]!.headers.get("sec-websocket-key"), "abc");
+  assert.equal(h.seen[0]!.headers.get("x-dsh-upgrade"), null);
+});
+
+test("只有 sec-websocket-key 也能识别为升级", async () => {
+  const h = env();
+  await handleRequest(
+    new Request("https://relay.example/api/remote.mux", { headers: { "sec-websocket-key": "abc" } }),
+    h.env,
+  );
+  assert.equal(h.seen.length, 1);
+  assert.equal(h.seen[0]!.headers.get("sec-websocket-key"), "abc");
+});
+
+test("非升级请求走普通浏览器分支", async () => {
+  const h = env();
+  const res = await handleRequest(new Request("https://relay.example/"), h.env);
+  assert.equal(await res.text(), "from-do");
+});

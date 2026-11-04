@@ -58,3 +58,22 @@ test("相对路径解析到 loopback 绝对地址", () => {
   assert.equal(toAbsoluteUrl("/api/remote.mux", options.loopbackOrigin), "http://127.0.0.1:50743/api/remote.mux");
   assert.equal(toAbsoluteUrl("https://x/y", options.loopbackOrigin), "https://x/y");
 });
+
+test("转发 WS 握手时丢弃客户端握手头", () => {
+  const out = rewriteRequestHeaders(
+    {
+      "sec-websocket-key": "abc",
+      "sec-websocket-version": "13",
+      "sec-websocket-extensions": "permessage-deflate",
+      connection: "Upgrade",
+      upgrade: "websocket",
+      "user-agent": "x",
+    },
+    { loopbackOrigin: "http://127.0.0.1:50743", hostCookie: "dsh-auth-1=2" },
+  );
+  assert.equal(out["sec-websocket-key"], undefined);
+  assert.equal(out.connection, undefined);
+  assert.equal(out.upgrade, undefined);
+  assert.equal(out.cookie, "dsh-auth-1=2");
+  assert.equal(out["user-agent"], "x");
+});

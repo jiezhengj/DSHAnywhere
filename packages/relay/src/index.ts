@@ -1,8 +1,24 @@
+export { RelayObject } from "./relay-object.ts";
 import { errorResponse } from "./errors.ts";
 
 export interface RelayEnv {
   RELAY_OBJECT: DurableObjectNamespace;
   DSH_INSTALL_ID?: string;
+}
+
+/**
+ * 判断是否为 WebSocket 升级请求。
+ * 实测：Cloudflare Workers 会把 `Upgrade` 头剥掉，只留下 `connection: Upgrade`
+ * 与 `sec-websocket-*`，所以不能只认 `upgrade`。
+ */
+export function isWebSocketUpgrade(request: Request): boolean {
+  const headers = request.headers;
+  return (
+    headers.get("x-dsh-upgrade") === "1" ||
+    headers.get("sec-websocket-key") !== null ||
+    (headers.get("connection") ?? "").toLowerCase().includes("upgrade") ||
+    (headers.get("upgrade") ?? "").toLowerCase() === "websocket"
+  );
 }
 
 /** 允许透传给 agent 的 WebSocket 路径：v1 只有实时通道 */
@@ -26,8 +42,11 @@ const HOP_BY_HOP = new Set([
 /** 必须剥离的头：平台痕迹会破坏 DSH 的同源判断 */
 const DROP_PREFIXES = ["cf-", "x-forwarded-", "x-real-ip"];
 
+const KEEP_HEADERS = new Set(["sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions"]);
+
 function shouldDrop(name: string): boolean {
   const lower = name.toLowerCase();
+  if (KEEP_HEADERS.has(lower)) return false;
   if (HOP_BY_HOP.has(lower)) return true;
   if (lower === "sec-fetch-site" || lower === "sec-fetch-mode" || lower === "sec-fetch-dest") return true;
   return DROP_PREFIXES.some((prefix) => lower.startsWith(prefix));
@@ -54,7 +73,7 @@ export async function handleRequest(request: Request, env: RelayEnv): Promise<Re
     return Response.json({ ok: true, protocolVersion: 1 });
   }
 
-  const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
+  const upgrade = isWebSocketUpgrade(request);
   const isAgent = url.pathname === "/__dsh_agent";
   if (isAgent && !upgrade) {
     return errorResponse("protocol");
@@ -66,6 +85,9 @@ export async function handleRequest(request: Request, env: RelayEnv): Promise<Re
 
   const installId = resolveInstallId(url, env);
   const stub = env.RELAY_OBJECT.get(env.RELAY_OBJECT.idFromName(installId));
+
+  // 升级请求必须原样转交：重新包装 Request 会丢失升级语义（实测 1006）
+  if (upgrade) return stub.fetch(request);
 
   const forwarded = new Request(request.url, {
     method: request.method,

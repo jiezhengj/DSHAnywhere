@@ -10,6 +10,8 @@ import {
 import type { AgentHello, Frame, RelayHelloAck } from "../../protocol/src/index.ts";
 
 export interface SocketLike {
+  /** 某些实现返回 Blob/字符串，需要显式要求二进制帧 */
+  binaryType?: string;
   send(data: Uint8Array | ArrayBuffer | string): void;
   close(code?: number, reason?: string): void;
   addEventListener(type: "open" | "message" | "close" | "error", cb: (event: unknown) => void): void;
@@ -109,14 +111,24 @@ export class AgentTunnel {
     this.#setStatus("idle");
   }
 
-  send(frame: Frame | Uint8Array): void {
-    if (!this.#socket) throw new Error("隧道未连接");
-    this.#socket.send(frame instanceof Uint8Array ? frame : encodeFrame(frame));
+  /** 返回 false 表示当前没有可用连接（调用方应把对应流判失败，而不是抛异常） */
+  send(frame: Frame | Uint8Array): boolean {
+    const socket = this.#socket;
+    if (!socket) return false;
+    try {
+      socket.send(frame instanceof Uint8Array ? frame : encodeFrame(frame));
+      return true;
+    } catch {
+      // 连接在发送瞬间被关闭：按未连接处理，避免把异常抛进事件回调
+      return false;
+    }
   }
 
   #connect(): void {
     this.#setStatus(this.#attempt === 0 ? "connecting" : "reconnecting");
     const socket = this.#createSocket(this.#options.url);
+    // Node/undici 的 WebSocket 默认把二进制帧当 Blob 交付，必须显式要求 arraybuffer
+    if ("binaryType" in socket) socket.binaryType = "arraybuffer";
     this.#socket = socket;
 
     socket.addEventListener("open", () => {
@@ -127,27 +139,13 @@ export class AgentTunnel {
     });
 
     socket.addEventListener("message", (event) => {
-      const data = (event as { data?: ArrayBuffer | Uint8Array }).data;
+      const data = (event as { data?: ArrayBuffer | Uint8Array | Blob }).data;
       if (!data) return;
-      let frame: Frame;
-      try {
-        frame = decodeFrame(data instanceof Uint8Array ? data : new Uint8Array(data));
-      } catch {
-        socket.close(4004, "protocol error");
+      if (typeof Blob !== "undefined" && data instanceof Blob) {
+        void data.arrayBuffer().then((buf) => this.#handleFrame(socket, buf));
         return;
       }
-      if (frame.type === FrameType.RELAY_HELLO_ACK) {
-        this.#options.onHelloAck?.(
-          JSON.parse(new TextDecoder().decode(frame.payload)) as RelayHelloAck,
-        );
-        return;
-      }
-      if (frame.type === FrameType.PING) {
-        socket.send(encodeFrame({ type: FrameType.PONG, streamId: 0, flags: 0, payload: new Uint8Array() }));
-        return;
-      }
-      if (frame.type === FrameType.PONG) return;
-      this.#options.onFrame?.(frame);
+      this.#handleFrame(socket, data instanceof Uint8Array ? data : new Uint8Array(data as ArrayBuffer));
     });
 
     socket.addEventListener("close", (event) => {
@@ -173,6 +171,32 @@ export class AgentTunnel {
       const err = event as { message?: string; error?: { message?: string } };
       this.#lastError = err.message ?? err.error?.message ?? "";
     });
+  }
+
+  #handleFrame(socket: SocketLike, raw: Uint8Array | ArrayBuffer): void {
+    let frame: Frame;
+    try {
+      frame = decodeFrame(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
+    } catch {
+      socket.close(4004, "protocol error");
+      return;
+    }
+    if (frame.type === FrameType.RELAY_HELLO_ACK) {
+      this.#options.onHelloAck?.(
+        JSON.parse(new TextDecoder().decode(frame.payload)) as RelayHelloAck,
+      );
+      return;
+    }
+    if (frame.type === FrameType.PING) {
+      socket.send(encodeFrame({ type: FrameType.PONG, streamId: 0, flags: 0, payload: new Uint8Array() }));
+      return;
+    }
+    if (frame.type === FrameType.PONG) return;
+    try {
+      this.#options.onFrame?.(frame);
+    } catch {
+      // 单帧处理失败不应带崩宿主进程：丢弃该帧，连接继续
+    }
   }
 
   #sendHello(socket: SocketLike): void {

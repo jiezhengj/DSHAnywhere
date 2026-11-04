@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Gateway } from "../../packages/plugin/src/gateway.ts";
 import type { WsClientLike } from "../../packages/plugin/src/gateway.ts";
-import { FrameType, decodeFrame, encodeFrame, encodeJson } from "../../packages/protocol/src/index.ts";
+import { FrameFlags, FrameType, decodeFrame, encodeFrame, encodeJson } from "../../packages/protocol/src/index.ts";
 import type { Frame } from "../../packages/protocol/src/index.ts";
 
 function harness(fetchImpl: typeof fetch) {
@@ -135,7 +135,7 @@ test("WS_OPEN 成功后回 ok", async () => {
 
 test("WS 数据双向转发并带文本标志", async () => {
   const listeners = new Map<string, ((ev: unknown) => void)[]>();
-  const outbound: Uint8Array[] = [];
+  const outbound: (Uint8Array | string)[] = [];
   const socket: WsClientLike = {
     send: (data) => outbound.push(data),
     close: () => {},
@@ -155,10 +155,63 @@ test("WS 数据双向转发并带文本标志", async () => {
   await gateway.onFrame({ type: FrameType.WS_OPEN, streamId: 8, flags: 0, payload: encodeJson({ path: "/api/remote.mux", headers: {} }) });
   await new Promise((r) => setTimeout(r, 10));
 
-  await gateway.onFrame({ type: FrameType.WS_DATA, streamId: 8, flags: 1, payload: new TextEncoder().encode("ping") });
-  assert.equal(new TextDecoder().decode(outbound[0]), "ping");
+  await gateway.onFrame({ type: FrameType.WS_DATA, streamId: 8, flags: FrameFlags.WS_TEXT, payload: new TextEncoder().encode("ping") });
+  // 文本帧必须原样以字符串交给宿主，DSH 的实时通道拒绝二进制帧
+  assert.equal(outbound[0], "ping");
 
   for (const cb of listeners.get("message") ?? []) cb({ data: new TextEncoder().encode("pong") });
   const dataFrame = sent.find((f) => f.type === FrameType.WS_DATA);
   assert.equal(new TextDecoder().decode(dataFrame!.payload), "pong");
+});
+
+test("上游关闭码非法时用 1000 兜底而不是抛异常", async () => {
+  const sent: Frame[] = [];
+  const closes: unknown[] = [];
+  const sockets: { close(code?: number, reason?: string): void }[] = [];
+  const socket = { close(code?: number, reason?: string) { closes.push({ code, reason }); } };
+  sockets.push(socket);
+  const gateway = new Gateway({
+    loopbackOrigin: "http://127.0.0.1:5",
+    mintHostCookie: async () => "dsh-auth-1=2",
+    send: (bytes) => sent.push(decodeFrame(bytes)),
+    openSocket: () => ({
+      send() {},
+      close(code?: number, reason?: string) {
+        if (typeof code !== "number" || code === 0 || code === 1006) {
+          throw new DOMException("invalid code", "InvalidAccessError");
+        }
+        closes.push({ code, reason });
+      },
+      addEventListener() {},
+    }) as never,
+  });
+  await gateway.onFrame({ type: FrameType.WS_OPEN, streamId: 1, flags: 0, payload: encodeJson({ path: "/api/remote.mux", headers: {} }) });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await gateway.onFrame({ type: FrameType.WS_CLOSE, streamId: 1, flags: 0, payload: encodeJson({ code: 0, reason: "" }) });
+  assert.deepEqual(closes, [{ code: 1000, reason: "" }]);
+});
+
+test("文本帧以字符串形式送给宿主 WebSocket", async () => {
+  const sent: unknown[] = [];
+  const gateway = new Gateway({
+    loopbackOrigin: "http://127.0.0.1:5",
+    mintHostCookie: async () => "dsh-auth-1=2",
+    send: () => {},
+    openSocket: () => ({
+      send(data: unknown) {
+        sent.push(data);
+      },
+      close() {},
+      addEventListener() {},
+    }) as never,
+  });
+  await gateway.onFrame({ type: FrameType.WS_OPEN, streamId: 2, flags: 0, payload: encodeJson({ path: "/api/remote.mux", headers: {} }) });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await gateway.onFrame({
+    type: FrameType.WS_DATA,
+    streamId: 2,
+    flags: FrameFlags.WS_TEXT,
+    payload: new TextEncoder().encode('{"jsonrpc":"2.0"}'),
+  });
+  assert.deepEqual(sent.at(-1), '{"jsonrpc":"2.0"}');
 });

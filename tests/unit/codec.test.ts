@@ -105,3 +105,17 @@ test("带 byteOffset 的子数组中解析仍然正确", () => {
   assert.equal(f.streamId, 3);
   assert.deepEqual(decodeJson(f.payload), { code: "protocol", message: "x" });
 });
+
+test("WS_DATA 允许超过 HTTP 分片上限的大消息", () => {
+  const big = new Uint8Array(300_000).fill(1);
+  const frame = encodeFrame({ type: FrameType.WS_DATA, streamId: 1, flags: 0, payload: big });
+  const back = decodeFrame(frame);
+  assert.equal(back.payload.byteLength, 300_000);
+});
+
+test("HTTP 分片仍受 64KB 上限约束", () => {
+  assert.throws(
+    () => encodeFrame({ type: FrameType.HTTP_RESPONSE_BODY, streamId: 1, flags: 0, payload: new Uint8Array(70_000) }),
+    /超过单帧上限/,
+  );
+});

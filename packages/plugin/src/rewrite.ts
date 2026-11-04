@@ -3,6 +3,13 @@ export const BROWSER_COOKIE = "__Host-dshanywhere";
 
 const DROP_PREFIXES = ["cf-", "x-forwarded-", "x-real-ip"];
 const DROP_EXACT = new Set([
+  // WebSocket 握手由客户端自己生成：把浏览器的这些头转过去会造成重复键、握手失败
+  "sec-websocket-key",
+  "sec-websocket-version",
+  "sec-websocket-extensions",
+  "sec-websocket-protocol",
+  "connection",
+  "upgrade",
   "sec-fetch-site",
   "sec-fetch-mode",
   "sec-fetch-dest",

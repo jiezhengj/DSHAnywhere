@@ -1,3 +1,4 @@
+import { MAX_FRAME_BYTES } from "./constants.ts";
 /** 帧类型；取值见 contracts/agent-protocol.md §3 */
 export const FrameType = {
   AGENT_HELLO: 0x01,
@@ -24,7 +25,21 @@ export type FrameTypeValue = (typeof FrameType)[keyof typeof FrameType];
 export const FrameFlags = {
   /** WS_DATA：payload 为 UTF-8 文本帧 */
   WS_TEXT: 1 << 0,
+  /** WS_DATA：还有后续分片，接收方需要累积后再交付给 WebSocket */
+  WS_MORE: 1 << 1,
 } as const;
+
+/** 一条 WebSocket 消息在协议层被切成多少个 ≤ MAX_FRAME_BYTES 的分片 */
+export function wsFragmentSizes(total: number, max = MAX_FRAME_BYTES): number[] {
+  const sizes: number[] = [];
+  let left = total;
+  while (left > 0) {
+    const size = Math.min(left, max);
+    sizes.push(size);
+    left -= size;
+  }
+  return sizes.length > 0 ? sizes : [0];
+}
 
 export interface AgentHello {
   installId: string;

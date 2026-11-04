@@ -41,7 +41,7 @@
 
 ### 平台与契约验证（先做，失败则重规划）
 
-- [ ] T007 **阻塞：需真实长任务会话** POC-1：用真实会话采样一轮长任务的请求密度与单次响应体量（对照 research.md R1/R5），把数字与结论写入 `docs/poc-findings.md`。本机无法在不产生真实模型调用与长任务的前提下复现，且现有并发/分片行为已由 `e2e-remote.test.ts`、`recovery.test.ts` 覆盖，故标注阻塞而非完成。
+- [x] T007 POC-1：用真实会话采样一轮长任务的请求密度与单次响应体量（对照 research.md R1/R5），把数字与结论写入 `docs/poc-findings.md`（实测：首屏 12 个请求 / 约 13.3 MB，单响应峰值 8 937 KB；任务进展全部走实时通道，HTTP 密度不随时长增长）
 - [x] T008 POC-2：起临时 Host + `wrangler dev` 中转 + 无头浏览器，抓首屏全部请求 URL，确认无指向 `127.0.0.1:<port>` 的绝对地址（R7）；若存在，记录需注入的改写规则到 `docs/poc-findings.md`
 - [x] T009 POC-3：验证 `dsh plugin --profile desktop add` 的挂载行为（R10）——已确认为「包声明 `dsh.bundle` 即成为补丁层」，无需手改用户补丁层；结论见 `docs/poc-findings.md`
 
@@ -208,6 +208,7 @@
 - [x] T073 发布形态验证：`dsh plugin --profile desktop add` 安装本地包并冷启动一次
 - [x] T074 提交前检查 `packages/**`、`docs/**`、`README.md`：全仓检索无作者域名/账号/Token；无凭证明文；文档语言为简体中文
 - [x] T075 [converge 补口] 状态页呈现仅桌面端可见的两类故障（中转不可达 / 额度已用尽），与 FR-013 对齐；`packages/plugin/src/pages.ts` + `tests/unit/pages.test.ts`
+- [x] T076 [真实部署验证] 在账号内 `wrangler deploy` 上线中转并端到端联调：健康检查、无 agent 时的 503 页、真实浏览器加载 DSH WebUI、`/api/remote.mux` 穿透；据此修复 6 个只在真实 Cloudflare 环境暴露的问题（Upgrade 头被剥、升级请求重包装、acceptWebSocket 混用、Blob 二进制帧、断连 send 抛错、非法关闭码），结论写入 `docs/poc-findings.md` POC-5
 
 ---
 

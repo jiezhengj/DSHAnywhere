@@ -1,5 +1,5 @@
 # DSHAnywhere 中转：使用者的 Cloudflare 账号自行部署
-# 部署：npx wrangler deploy --config relay/wrangler.toml
+# 部署：cf deploy（在 packages/relay 目录内）或 npx wrangler deploy
 name = "dsh-anywhere-relay"
 main = "src/index.ts"
 compatibility_date = "2025-01-15"

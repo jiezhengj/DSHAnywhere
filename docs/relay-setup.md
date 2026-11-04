@@ -13,7 +13,7 @@
 1. 在本仓库根目录执行：
 
    ```bash
-   npx wrangler deploy --config relay/wrangler.toml
+   npx wrangler deploy --config packages/relay/wrangler.toml
    ```
 
 2. 首次执行会打开浏览器要求登录 Cloudflare 并授权。授权完成后回到终端等待部署结束。

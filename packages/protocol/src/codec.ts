@@ -1,4 +1,4 @@
-import { HEADER_BYTES, MAX_FRAME_BYTES, PROTOCOL_VERSION } from "./constants.ts";
+import { HEADER_BYTES, MAX_FRAME_BYTES, MAX_WS_MESSAGE_BYTES, PROTOCOL_VERSION } from "./constants.ts";
 import { FrameType } from "./frames.ts";
 import type { FrameTypeValue } from "./frames.ts";
 
@@ -26,11 +26,10 @@ const KNOWN_TYPES = new Set<number>(Object.values(FrameType));
 /** 编码一帧；调用方负责保证 payload ≤ MAX_FRAME_BYTES。 */
 export function encodeFrame(frame: Frame): Uint8Array {
   const { type, streamId, flags, payload } = frame;
-  if (payload.byteLength > MAX_FRAME_BYTES) {
-    throw new ProtocolError(
-      `payload ${payload.byteLength} 超过单帧上限 ${MAX_FRAME_BYTES}`,
-      "bad-length",
-    );
+  // WS_DATA 承载一条完整的 WebSocket 消息，可能远大于 HTTP 分片上限
+  const limit = type === FrameType.WS_DATA ? MAX_WS_MESSAGE_BYTES : MAX_FRAME_BYTES;
+  if (payload.byteLength > limit) {
+    throw new ProtocolError(`payload ${payload.byteLength} 超过单帧上限 ${limit}`, "bad-length");
   }
   const out = new Uint8Array(HEADER_BYTES + payload.byteLength);
   const view = new DataView(out.buffer);
@@ -60,7 +59,8 @@ export function decodeFrame(buf: Uint8Array): Frame {
   const flags = view.getUint16(2, false);
   const streamId = view.getUint32(4, false);
   const length = view.getUint32(8, false);
-  if (length > MAX_FRAME_BYTES) {
+  const limit = type === FrameType.WS_DATA ? MAX_WS_MESSAGE_BYTES : MAX_FRAME_BYTES;
+  if (length > limit) {
     throw new ProtocolError(`声明的载荷长度 ${length} 超过单帧上限`, "bad-length");
   }
   if (HEADER_BYTES + length > buf.byteLength) {

@@ -1,4 +1,5 @@
 import {
+  FrameFlags,
   FrameType,
   MAX_FRAME_BYTES,
   decodeJson,
@@ -18,7 +19,7 @@ import { filterResponseHeaders, rewriteRequestHeaders, toAbsoluteUrl } from "./r
 import { renderDisabledPage, renderUnauthorizedPage } from "./pages.ts";
 
 export interface WsClientLike {
-  send(data: Uint8Array): void;
+  send(data: Uint8Array | string): void;
   close(code?: number, reason?: string): void;
   addEventListener(type: "open" | "message" | "close" | "error", cb: (event: unknown) => void): void;
   binaryType?: string;
@@ -27,7 +28,7 @@ export interface WsClientLike {
 export interface GatewayDeps {
   loopbackOrigin: string;
   mintHostCookie: (force?: boolean) => Promise<string>;
-  send: (bytes: Uint8Array) => void;
+  send: (bytes: Uint8Array) => void | boolean;
   fetchImpl?: typeof fetch;
   openSocket?: (url: string, headers: Record<string, string>) => WsClientLike;
   maxFrameBytes?: number;
@@ -86,13 +87,19 @@ export class Gateway {
         return;
       case FrameType.WS_DATA: {
         const socket = this.#sockets.get(frame.streamId);
-        socket?.send(frame.payload);
+        if (!socket) return;
+        // DSH 的实时通道只接受文本帧：必须保留文本标记
+        if ((frame.flags & FrameFlags.WS_TEXT) !== 0) {
+          socket.send(new TextDecoder().decode(frame.payload));
+        } else {
+          socket.send(frame.payload);
+        }
         return;
       }
       case FrameType.WS_CLOSE: {
         const socket = this.#sockets.get(frame.streamId);
         const payload = decodeJson<WsClose>(frame.payload);
-        socket?.close(payload.code, payload.reason);
+        if (socket) closeSafely(socket, payload.code, payload.reason);
         this.#sockets.delete(frame.streamId);
         return;
       }
@@ -229,10 +236,10 @@ export class Gateway {
       socket.addEventListener("message", (event) => {
         const data = (event as { data?: ArrayBuffer | Uint8Array | string }).data;
         if (data === undefined) return;
-        const bytes =
-          typeof data === "string" ? new TextEncoder().encode(data) : new Uint8Array(data as ArrayBuffer);
-        const flags = typeof data === "string" ? 1 : 0;
-        this.#sendFrame(FrameType.WS_DATA, streamId, bytes, flags);
+        const isText = typeof data === "string";
+        const bytes = isText ? new TextEncoder().encode(data) : new Uint8Array(data as ArrayBuffer);
+        // 一条消息一次发送：WS_DATA 不受 HTTP 分片上限约束
+        this.#sendFrame(FrameType.WS_DATA, streamId, bytes, isText ? FrameFlags.WS_TEXT : 0);
       });
       socket.addEventListener("close", (event) => {
         const ev = event as { code?: number; reason?: string };
@@ -262,7 +269,32 @@ export class Gateway {
   }
 
   #sendFrame(type: number, streamId: number, payload: Uint8Array, flags = 0): void {
-    this.#deps.send(encodeFrame({ type: type as never, streamId, flags, payload }));
+    try {
+      this.#deps.send(encodeFrame({ type: type as never, streamId, flags, payload }));
+    } catch {
+      // 连接在发送瞬间断开：丢弃这一帧，重连由隧道负责；绝不让异常冒泡到事件回调
+    }
+  }
+}
+
+/**
+ * 关闭码必须是 RFC6455 允许的值：undici 收到 0/1006/undefined 会抛 DOMException，
+ * 而这类异常发生在 WS_CLOSE 回调里会直接带崩宿主进程（实测）。
+ */
+function closeSafely(socket: WsClientLike, code: number | undefined, reason: string | undefined): void {
+  const allowed =
+    typeof code === "number" &&
+    code >= 1000 &&
+    code <= 4999 &&
+    ![1004, 1005, 1006, 1015].includes(code);
+  try {
+    socket.close(allowed ? code : 1000, reason ?? "");
+  } catch {
+    try {
+      socket.close(1000, "");
+    } catch {
+      // 已经关闭：忽略
+    }
   }
 }
 

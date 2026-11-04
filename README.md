@@ -22,7 +22,7 @@
 dsh plugin --profile desktop add <本仓库的 packages/plugin>
 
 # 2. 部署你自己的中转，记下返回的 https://<name>.workers.dev
-npx wrangler deploy --config relay/wrangler.toml
+npx wrangler deploy --config packages/relay/wrangler.toml
 
 # 3. 桌面端点「生成配对链接」，手机扫码
 ```

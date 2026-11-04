@@ -12,7 +12,7 @@ export interface StatusView {
   relayFailure?: "unreachable" | "quota" | undefined;
 }
 
-const DEPLOY_COMMAND = "npx wrangler deploy --config relay/wrangler.toml";
+const DEPLOY_COMMAND = "npx wrangler deploy --config packages/relay/wrangler.toml";
 
 function escapeHtml(text: string): string {
   return text
