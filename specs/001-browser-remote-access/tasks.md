@@ -273,3 +273,9 @@ Phase 1 (Setup)
 | 代理下资源路径需改写 | T008 → 需要时在 `adapter.ts` 增加 `rewriteLoopbackUrls` 开关 |
 | 安装步骤挤爆 10 分钟预算 | T009 → T042 一键脚本 |
 | DSH 契约变更 | T013/T014 的探测与禁用路径 |
+
+## Phase 9: Convergence
+
+- [x] T079 [FR-027] 把 `packages/plugin/src/version.ts` 的 `probeContract` 接进 `apply()`：探测失败时禁用入口与隧道，在状态 API 与状态页给出「版本不兼容 + 升级/降级指引」，不得半可用运行。依据：全仓检索 `probeContract` 只有定义、无调用，契约探测目前是死代码
+- [x] T080 [FR-009][协议] 实现 WebSocket 消息分片：单条 WS 消息超过 1 MiB（Cloudflare 上限）时按 `MAX_FRAME_BYTES` 切片传输并在对端重组，避免大历史快照被静默丢弃。依据：`encodeFrame` 对 `WS_DATA` 超限直接抛错，`#sendFrame` 吞掉异常，消息丢失无提示
+- [x] T081 [FR-015][FR-021] 在 `docs/security.md` 明确「配对令牌位于 URL 路径，会出现在 Cloudflare 访问日志与任何中间代理日志中」，并写清既有缓解（10 分钟 TTL、一次性、可轮换、可撤销），必要时给出改用一次性短路径的建议

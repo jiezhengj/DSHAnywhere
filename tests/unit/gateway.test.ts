@@ -242,3 +242,42 @@ test("配对路径跳过设备鉴权", async () => {
   const head = sent.find((f) => f.type === FrameType.HTTP_RESPONSE_HEAD);
   assert.equal(JSON.parse(new TextDecoder().decode(head!.payload)).status, 303);
 });
+
+test("超过单帧上限的 WS 消息被分片传输并原样还原", async () => {
+  const sent: Frame[] = [];
+  const received: (Uint8Array | string)[] = [];
+  const listeners = new Map<string, ((ev: unknown) => void)[]>();
+  const gateway = new Gateway({
+    loopbackOrigin: "http://127.0.0.1:5",
+    mintHostCookie: async () => "c=1",
+    send: (bytes) => sent.push(decodeFrame(bytes)),
+    openSocket: () => ({
+      send(data: Uint8Array | string) {
+        received.push(data);
+      },
+      close() {},
+      addEventListener(type, cb) {
+        const arr = listeners.get(type) ?? [];
+        arr.push(cb);
+        listeners.set(type, arr);
+      },
+    }) as never,
+  });
+  await gateway.onFrame({
+    type: FrameType.WS_OPEN,
+    streamId: 7,
+    flags: 0,
+    payload: encodeJson({ path: "/api/remote.mux", headers: {} }),
+  });
+  await new Promise((r) => setTimeout(r, 10));
+
+  const big = "x".repeat(200_000);
+  for (const cb of listeners.get("message") ?? []) cb({ data: big });
+  const frames = sent.filter((f) => f.type === FrameType.WS_DATA);
+  assert.ok(frames.length > 1, "应切成多帧");
+  assert.ok(frames.slice(0, -1).every((f) => (f.flags & FrameFlags.WS_MORE) !== 0));
+  assert.equal(frames.at(-1)!.flags & FrameFlags.WS_MORE, 0);
+
+  for (const f of frames) await gateway.onFrame(f);
+  assert.equal(received.at(-1), big);
+});

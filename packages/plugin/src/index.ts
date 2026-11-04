@@ -9,8 +9,9 @@ import { parseConfig, isConfigured } from "./config.ts";
 import type { PluginConfig } from "./config.ts";
 import { Gateway } from "./gateway.ts";
 import { handlePairing } from "./pairing.ts";
-import { renderStatusPage } from "./pages.ts";
+import { renderIncompatiblePage, renderStatusPage } from "./pages.ts";
 import { handleStatusApi } from "./status.ts";
+import { probeHostSurface } from "./version.ts";
 import type { StatusContext } from "./status.ts";
 import { Store, emptyState } from "./store.ts";
 import type { StoreState } from "./store.ts";
@@ -62,7 +63,7 @@ export interface PluginRuntime {
   config: PluginConfig;
   store: Store;
   state(): StoreState;
-  status(): { connection: TunnelStatus; relayOrigin: string | null };
+  status(): { connection: TunnelStatus; relayOrigin: string | null; disabled?: string };
   stop(): void;
 }
 
@@ -139,6 +140,40 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
     current = loaded;
     return loaded;
   });
+
+  // FR-027：契约探测失败必须整体禁用并给出指引；探测函数单独抽出，便于单测覆盖
+  const probe = probeHostSurface({
+    webServer: host.webServer as never,
+    connection: host.connection as never,
+    muxPath: MUX_PATH,
+  });
+  if (!probe.ok) {
+    safeLog(host, "error", `DSHAnywhere 已禁用：${probe.detail}`);
+    const webServer = host.webServer as
+      | { register?: (route: { kind: "prefix"; path: string; handler: unknown }) => void }
+      | undefined;
+    try {
+      webServer?.register?.({
+        kind: "prefix",
+        path: "/__anywhere",
+        handler: (req: HostRequestLike, res: HostResponseLike) => {
+          res.statusCode = 503;
+          res.setHeader?.("content-type", "text/html; charset=utf-8");
+          res.setHeader?.("cache-control", "no-store");
+          res.end?.(renderIncompatiblePage(probe.detail));
+        },
+      });
+    } catch {
+      // 连注册都不可用：只能留日志，不抛异常
+    }
+    return {
+      config,
+      store,
+      state: () => current,
+      status: () => ({ connection: "idle", relayOrigin: null, disabled: probe.reason }),
+      stop: () => {},
+    };
+  }
 
   let adapter: Adapter | null = null;
   try {

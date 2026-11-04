@@ -211,9 +211,9 @@ ELECTRON_RUN_AS_NODE=1 "<app>" "<bin.js>" --profile dshanywhere-cold --port 5099
 
 - **DSH 实时通道只接受文本帧**：把文本当二进制转发会被 `1003 text messages required` 拒绝。
   `WS_DATA` 的 `WS_TEXT` 标记必须在双向都保留（已加测试）。
-- **单条 WS 消息会超过 64 KB**：会话历史快照一次可达数百 KB，而 `MAX_FRAME_BYTES` 只该约束 HTTP 分片。
-  新增 `MAX_WS_MESSAGE_BYTES = 1 MiB`（Cloudflare Workers 的 WS 单消息上限）并让 `WS_DATA` 走这个上限；
-  超过 1 MiB 的历史快照目前会被拒绝，属于已知限制。
+- **单条 WS 消息会超过 64 KB**：会话历史快照一次可达数百 KB，超过单帧上限会被直接丢弃且没有提示
+  （现场表现为「载入历史…」一直转圈）。现在 `WS_DATA` 用 `WS_MORE` 标记做分片传输，两端都累积后
+  再交给 WebSocket；Cloudflare 的 1 MiB 单消息上限因此只约束"对端一次交付"，不再约束协议帧。
 - **WebSocket 握手头必须剥离**：把浏览器的 `sec-websocket-key/version/extensions` 透传给 loopback 会造成重复键、
   握手失败，`rewriteRequestHeaders` 已把这些头加入丢弃列表。
 

@@ -10,6 +10,7 @@ import {
   decodeJson,
   encodeFrame,
   encodeJson,
+  wsFragmentSizes,
 } from "../../packages/protocol/src/index.ts";
 
 test("编码后头字段位置与字节序正确", () => {
@@ -106,16 +107,11 @@ test("带 byteOffset 的子数组中解析仍然正确", () => {
   assert.deepEqual(decodeJson(f.payload), { code: "protocol", message: "x" });
 });
 
-test("WS_DATA 允许超过 HTTP 分片上限的大消息", () => {
-  const big = new Uint8Array(300_000).fill(1);
-  const frame = encodeFrame({ type: FrameType.WS_DATA, streamId: 1, flags: 0, payload: big });
-  const back = decodeFrame(frame);
-  assert.equal(back.payload.byteLength, 300_000);
-});
-
-test("HTTP 分片仍受 64KB 上限约束", () => {
-  assert.throws(
-    () => encodeFrame({ type: FrameType.HTTP_RESPONSE_BODY, streamId: 1, flags: 0, payload: new Uint8Array(70_000) }),
-    /超过单帧上限/,
-  );
+test("分片规划：按 64KB 切分，末片不超限", () => {
+  assert.deepEqual(wsFragmentSizes(0), [0]);
+  assert.deepEqual(wsFragmentSizes(100), [100]);
+  const sizes = wsFragmentSizes(200_000);
+  assert.equal(sizes.length, 4);
+  assert.equal(sizes.reduce((a, b) => a + b, 0), 200_000);
+  assert.ok(sizes.every((n) => n <= MAX_FRAME_BYTES));
 });

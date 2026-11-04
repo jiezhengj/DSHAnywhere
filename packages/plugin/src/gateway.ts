@@ -1,6 +1,7 @@
 import {
   FrameFlags,
   FrameType,
+  wsFragmentSizes,
   MAX_FRAME_BYTES,
   decodeJson,
   encodeFrame,
@@ -55,6 +56,7 @@ export class Gateway {
   readonly #windows = new Map<number, FlowWindow>();
   readonly #creditWaiters = new Map<number, () => void>();
   readonly #sockets = new Map<number, WsClientLike>();
+  readonly #wsParts = new Map<number, Uint8Array[]>();
 
   constructor(deps: GatewayDeps) {
     this.#deps = deps;
@@ -88,12 +90,20 @@ export class Gateway {
         return;
       case FrameType.WS_DATA: {
         const socket = this.#sockets.get(frame.streamId);
+        const parts = this.#wsParts.get(frame.streamId) ?? [];
+        parts.push(frame.payload);
+        if ((frame.flags & FrameFlags.WS_MORE) !== 0) {
+          this.#wsParts.set(frame.streamId, parts);
+          return;
+        }
+        this.#wsParts.delete(frame.streamId);
         if (!socket) return;
+        const whole = parts.length === 1 ? parts[0]! : concat(parts, parts.reduce((n, p) => n + p.byteLength, 0));
         // DSH 的实时通道只接受文本帧：必须保留文本标记
         if ((frame.flags & FrameFlags.WS_TEXT) !== 0) {
-          socket.send(new TextDecoder().decode(frame.payload));
+          socket.send(new TextDecoder().decode(whole));
         } else {
-          socket.send(frame.payload);
+          socket.send(whole);
         }
         return;
       }
@@ -248,8 +258,20 @@ export class Gateway {
         if (data === undefined) return;
         const isText = typeof data === "string";
         const bytes = isText ? new TextEncoder().encode(data) : new Uint8Array(data as ArrayBuffer);
-        // 一条消息一次发送：WS_DATA 不受 HTTP 分片上限约束
-        this.#sendFrame(FrameType.WS_DATA, streamId, bytes, isText ? FrameFlags.WS_TEXT : 0);
+        // 一条 WS 消息可能远超单帧上限：切片传输，末片不带 WS_MORE
+        const sizes = wsFragmentSizes(bytes.byteLength);
+        let offset = 0;
+        for (let i = 0; i < sizes.length; i += 1) {
+          const size = sizes[i]!;
+          const more = i < sizes.length - 1;
+          this.#sendFrame(
+            FrameType.WS_DATA,
+            streamId,
+            bytes.subarray(offset, offset + size),
+            (isText ? FrameFlags.WS_TEXT : 0) | (more ? FrameFlags.WS_MORE : 0),
+          );
+          offset += size;
+        }
       });
       socket.addEventListener("close", (event) => {
         const ev = event as { code?: number; reason?: string };

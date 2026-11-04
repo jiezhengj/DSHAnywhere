@@ -139,6 +139,16 @@ export function renderUnauthorizedPage(): string {
   });
 }
 
+/** 契约探测失败：必须禁用并给出升级/回退指引，不做半可用降级（FR-027） */
+export function renderIncompatiblePage(detail: string): string {
+  return renderErrorPage({
+    ...errorSpec("protocol"),
+    status: 503,
+    title: "远程接入已禁用：DSH 版本不兼容",
+    hint: `需要 DSH 0.2.x 的契约面（webServer/connection//api/remote.mux）。${detail} 请升级或回退 DSH 后重试。`,
+  });
+}
+
 export function renderDisabledPage(): string {
   return renderErrorPage({
     ...errorSpec("protocol"),

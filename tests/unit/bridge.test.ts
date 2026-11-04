@@ -98,3 +98,22 @@ test("超时后回 504 类错误", async () => {
   await new Promise((r) => setTimeout(r, 25));
   assert.deepEqual(h.events, ["fail:upstream-timeout"]);
 });
+
+test("大 WS 消息经 bridge 分片传输与还原", () => {
+  const out: Frame[] = [];
+  const bridge = new RelayBridge({ send: (bytes) => out.push(decodeFrame(bytes)) });
+  const got: { data: Uint8Array; text: boolean }[] = [];
+  const id = bridge.openWs({ path: "/api/remote.mux", headers: {} }, {
+    open: () => {},
+    data: (chunk, isText) => got.push({ data: chunk, text: isText }),
+    close: () => {},
+    fail: () => {},
+  });
+  bridge.sendWsData(id, new Uint8Array(150_000).fill(7), true);
+  const frames = out.filter((f) => f.type === FrameType.WS_DATA);
+  assert.ok(frames.length > 1);
+  for (const f of frames) bridge.onFrame(f);
+  assert.equal(got.length, 1, "应合并回一条消息");
+  assert.equal(got[0]!.data.byteLength, 150_000);
+  assert.equal(got[0]!.text, true);
+});

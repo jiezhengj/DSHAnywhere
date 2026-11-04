@@ -3,6 +3,7 @@ import {
   FrameType,
   MAX_FRAME_BYTES,
   REQUEST_TIMEOUT_MS,
+  wsFragmentSizes,
   WINDOW_BYTES,
   decodeFrame,
   encodeFrame,
@@ -51,6 +52,7 @@ export class RelayBridge {
   readonly #windowBytes: number;
   readonly #maxFrameBytes: number;
   readonly #streams = new Map<number, StreamState>();
+  readonly #wsParts = new Map<number, Uint8Array[]>();
   readonly #wsStreams = new Map<number, WsSink>();
   #nextStreamId = 1;
 
@@ -93,8 +95,21 @@ export class RelayBridge {
   }
 
   /** 浏览器侧数据帧 */
+  /** 浏览器发来的一条 WS 消息可能超过单帧上限：切片后传输，末片不带 WS_MORE */
   sendWsData(streamId: number, chunk: Uint8Array, isText = false): void {
-    this.#send(FrameType.WS_DATA, streamId, chunk, isText ? FrameFlags.WS_TEXT : 0);
+    const sizes = wsFragmentSizes(chunk.byteLength);
+    let offset = 0;
+    for (let i = 0; i < sizes.length; i += 1) {
+      const size = sizes[i]!;
+      const more = i < sizes.length - 1;
+      this.#send(
+        FrameType.WS_DATA,
+        streamId,
+        chunk.subarray(offset, offset + size),
+        (isText ? FrameFlags.WS_TEXT : 0) | (more ? FrameFlags.WS_MORE : 0),
+      );
+      offset += size;
+    }
   }
 
   closeWs(streamId: number, code: number, reason: string): void {
@@ -144,7 +159,16 @@ export class RelayBridge {
       }
       case FrameType.WS_DATA: {
         const sink = this.#wsStreams.get(frame.streamId);
-        sink?.data(frame.payload, (frame.flags & FrameFlags.WS_TEXT) !== 0);
+        const parts = this.#wsParts.get(frame.streamId) ?? [];
+        parts.push(frame.payload);
+        if ((frame.flags & FrameFlags.WS_MORE) !== 0) {
+          this.#wsParts.set(frame.streamId, parts);
+          return true;
+        }
+        this.#wsParts.delete(frame.streamId);
+        const whole =
+          parts.length === 1 ? parts[0]! : concatBytes(parts, parts.reduce((n, p) => n + p.byteLength, 0));
+        sink?.data(whole, (frame.flags & FrameFlags.WS_TEXT) !== 0);
         return true;
       }
       case FrameType.WS_CLOSE: {
@@ -191,4 +215,14 @@ export class RelayBridge {
 export function decodeAgentMessage(data: ArrayBuffer | Uint8Array): Frame {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   return decodeFrame(bytes);
+}
+
+function concatBytes(chunks: Uint8Array[], total: number): Uint8Array {
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }

@@ -8,8 +8,6 @@ export const HEADER_BYTES = 12;
 export const MAX_FRAME_BYTES = 65_536;
 
 /** 单流窗口（字节） */
-/** Cloudflare Workers 的 WebSocket 单条消息上限是 1 MiB，据此设协议上限 */
-export const MAX_WS_MESSAGE_BYTES = 1_048_576;
 export const WINDOW_BYTES = 262_144;
 
 /** 心跳间隔（毫秒） */

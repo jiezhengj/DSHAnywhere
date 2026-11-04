@@ -30,15 +30,23 @@ test("宿主缺少 webServer 时不注册任何路由并记录禁用原因", asy
   assert.equal(runtime.status().connection, "idle");
 });
 
-test("缺能力（无 registerUpgrade）同样禁用，不出现半可用", async () => {
+test("缺能力（无 registerUpgrade）同样禁用，只留一页版本不兼容指引", async () => {
   const errors: string[] = [];
-  let registered = 0;
+  const registered: string[] = [];
+  const pages: string[] = [];
   const runtime = createRuntime(
     {
       webServer: {
         getOrigin: () => "http://127.0.0.1:50743",
-        register: () => {
-          registered += 1;
+        register: (route: { kind: string; path: string; handler: unknown }) => {
+          registered.push(`${route.kind}:${route.path}`);
+          (route.handler as (req: unknown, res: unknown) => void)(
+            { method: "GET", url: "/__anywhere", headers: {} },
+            {
+              setHeader: () => {},
+              end: (body?: string) => pages.push(body ?? ""),
+            },
+          );
           return () => {};
         },
         protocol: "http",
@@ -49,8 +57,12 @@ test("缺能力（无 registerUpgrade）同样禁用，不出现半可用", asyn
     {},
     baseOptions(await dir()),
   );
-  assert.equal(registered, 0, "能力缺失时不应注册任何路由");
+  // 不做半可用：只注册禁用说明页，不注册配对入口
+  assert.deepEqual(registered, ["prefix:/__anywhere"]);
   assert.match(errors[0] ?? "", /已禁用/);
+  assert.match(pages[0] ?? "", /版本不兼容/);
+  assert.match(pages[0] ?? "", /0\.2\.x|升级|回退/);
+  assert.equal(runtime.status().disabled, "missing-registerUpgrade");
   assert.equal(runtime.store !== undefined, true);
 });
 
