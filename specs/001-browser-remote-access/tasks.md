@@ -103,20 +103,20 @@
 
 ### Tests for US2
 
-- [ ] T031 [P] [US2] 单测：中转地址规范化（仅 `https://`、无路径/查询串、末尾斜杠归一），`tests/unit/relay-url.test.ts`
-- [ ] T032 [P] [US2] 单测：能力链接生成/过期/一次性消费/并发先到者胜，`tests/unit/link.test.ts`
+- [x] T031 [P] [US2] 单测：中转地址规范化（仅 `https://`、无路径/查询串、末尾斜杠归一），`tests/unit/relay-url.test.ts`
+- [x] T032 [P] [US2] 单测：能力链接生成/过期/一次性消费/并发先到者胜，`tests/unit/link.test.ts`
 
 ### Implementation for US2
 
-- [ ] T033 [US2] 插件配置 schema 与首次启动状态 `packages/plugin/src/config.ts`：`relayUrl` 可空，未配置时状态页显示"未配置中转"
-- [ ] T034 [US2] 中转地址规范化与校验 `packages/plugin/src/relay-url.ts`（`contracts/status-api.md §3` 的 `invalid-url` 错误码）
-- [ ] T035 [US2] 握手回传 `relayOrigin` 并据此构造配对入口 `packages/plugin/src/agent.ts`
-- [ ] T036 [US2] 管理页骨架 `packages/plugin/ui/index.html`，路由经 `adapter.registerRoute("prefix", "/__anywhere/", …)` 注册：未配置中转时展示部署文档链接与完整命令（FR-001），已配置时展示状态
-- [ ] T037 [P] [US2] 零依赖二维码编码器 `packages/plugin/ui/qr.js`（≤ 8 KB），并在管理页渲染为 canvas
-- [ ] T038 [US2] 能力链接生成 `packages/plugin/src/link.ts`：32 字节随机、只存 SHA-256、`expiresAt = +10 分钟`、同时最多 1 条 active
-- [ ] T039 [US2] 配对端点 `/p/:token`：校验（含设备数上限 10 台，超限拒绝并提示）→ 下发设备凭证 → `303 Location: /`，并按 `contracts/relay-http.md §2` 设置 `no-store`/`no-referrer`
-- [ ] T040 [US2] 部署文档 `docs/relay-setup.md`：含 `npx wrangler deploy --config relay/wrangler.toml`、账号授权、`workers.dev` 地址获取、`/__relay/health` 自检
-- [ ] T041 [US2] 安装文档 `docs/install.md`：一条命令 `dsh plugin --profile desktop add <本包>`（bundle 自动挂载，无需手改 `cordis.patch.yml`），并给出内置 CLI 的调用方式
+- [x] T033 [US2] 插件配置 schema 与首次启动状态 `packages/plugin/src/config.ts`：`relayUrl` 可空，未配置时状态页显示"未配置中转"
+- [x] T034 [US2] 中转地址规范化与校验 `packages/plugin/src/relay-url.ts`（`contracts/status-api.md §3` 的 `invalid-url` 错误码）
+- [x] T035 [US2] 握手回传 `relayOrigin` 并据此构造配对入口 `packages/plugin/src/agent.ts`
+- [x] T036 [US2] 管理页骨架 `packages/plugin/ui/index.html`，路由经 `adapter.registerRoute("prefix", "/__anywhere/", …)` 注册：未配置中转时展示部署文档链接与完整命令（FR-001），已配置时展示状态
+- [x] T037 [P] [US2] 零依赖二维码编码器 `packages/plugin/ui/qr.js`（≤ 8 KB），并在管理页渲染为 canvas
+- [x] T038 [US2] 能力链接生成 `packages/plugin/src/link.ts`：32 字节随机、只存 SHA-256、`expiresAt = +10 分钟`、同时最多 1 条 active
+- [x] T039 [US2] 配对端点 `/p/:token`：校验（含设备数上限 10 台，超限拒绝并提示）→ 下发设备凭证 → `303 Location: /`，并按 `contracts/relay-http.md §2` 设置 `no-store`/`no-referrer`
+- [x] T040 [US2] 部署文档 `docs/relay-setup.md`：含 `npx wrangler deploy --config relay/wrangler.toml`、账号授权、`workers.dev` 地址获取、`/__relay/health` 自检
+- [x] T041 [US2] 安装文档 `docs/install.md`：一条命令 `dsh plugin --profile desktop add <本包>`（bundle 自动挂载，无需手改 `cordis.patch.yml`），并给出内置 CLI 的调用方式
 - [x] T042 [US2] 将 `packages/plugin` 声明为 bundle（`dsh.bundle.patch` + 自带 `cordis.patch.yml`），使安装在一条命令内完成；已用 `dsh --dump-config` 实测插入项生效
 
 **Checkpoint**: 使用者能独立完成"部署 → 接入 → 扫码"，US1 的能力首次对真实用户可用

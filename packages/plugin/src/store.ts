@@ -16,6 +16,8 @@ export interface RelayBinding {
 export interface Device {
   id: string;
   label: string;
+  /** 设备凭证的 SHA-256 摘要；明文只在配对时返回一次 */
+  credentialHash: string;
   createdAt: string;
   lastSeenAt: string;
   revokedAt?: string;
@@ -23,8 +25,10 @@ export interface Device {
 
 export interface LinkRecord {
   tokenHash: string;
-  createdAt: string;
-  expiresAt: string;
+  /** epoch 毫秒 */
+  createdAt: number;
+  /** epoch 毫秒 */
+  expiresAt: number;
   epoch: number;
 }
 

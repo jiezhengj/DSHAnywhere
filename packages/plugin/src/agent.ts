@@ -78,9 +78,9 @@ export class AgentTunnel {
     this.#setStatus("idle");
   }
 
-  send(frame: Frame): void {
+  send(frame: Frame | Uint8Array): void {
     if (!this.#socket) throw new Error("隧道未连接");
-    this.#socket.send(encodeFrame(frame));
+    this.#socket.send(frame instanceof Uint8Array ? frame : encodeFrame(frame));
   }
 
   #connect(): void {
