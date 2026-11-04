@@ -47,3 +47,15 @@ test("页面包含 no-referrer 且无外部资源", () => {
   assert.match(html, /name="referrer" content="no-referrer"/);
   assert.doesNotMatch(html, /https?:\/\/(?!github\.com)[a-z0-9.-]+\/.*\.(js|css)/i);
 });
+
+test("桌面端区分中转不可达与额度限制（FR-013）", () => {
+  const unreachable = renderStatusPage({ ...base, relayFailure: "unreachable" });
+  const quota = renderStatusPage({ ...base, relayFailure: "quota" });
+  assert.match(unreachable, /中转不可达/);
+  assert.match(quota, /额度已用尽/);
+  assert.notEqual(unreachable, quota);
+});
+
+test("正常状态下不渲染故障横幅", () => {
+  assert.doesNotMatch(renderStatusPage(base), /中转不可达/);
+});

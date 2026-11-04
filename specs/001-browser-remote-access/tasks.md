@@ -207,6 +207,7 @@
 - [x] T072 清理：临时脚本、调试日志、未使用的导出；确认无 `TODO` 残留
 - [x] T073 发布形态验证：`dsh plugin --profile desktop add` 安装本地包并冷启动一次
 - [x] T074 提交前检查 `packages/**`、`docs/**`、`README.md`：全仓检索无作者域名/账号/Token；无凭证明文；文档语言为简体中文
+- [x] T075 [converge 补口] 状态页呈现仅桌面端可见的两类故障（中转不可达 / 额度已用尽），与 FR-013 对齐；`packages/plugin/src/pages.ts` + `tests/unit/pages.test.ts`
 
 ---
 

@@ -157,6 +157,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
 
   let connection: TunnelStatus = "idle";
   let relayOrigin: string | null = null;
+  let relayFailure: "unreachable" | "quota" | undefined;
   let tunnel: AgentTunnel | null = null;
 
   const runtime: PluginRuntime = {
@@ -192,6 +193,11 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
         capabilities: ["MUX"],
         onStatus: (status) => {
           connection = status;
+          if (status === "connected") relayFailure = undefined;
+          else if (status === "failed") {
+            const failure = tunnel?.failure ?? null;
+            relayFailure = failure === "quota" ? "quota" : failure === "unauthorized" ? undefined : "unreachable";
+          }
         },
         onHelloAck: (ack) => {
           relayOrigin = ack.relayOrigin;
@@ -281,6 +287,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
       devices: current.devices.filter((d) => !d.revokedAt).map((d) => ({ id: d.id, label: d.label, lastSeenAt: d.lastSeenAt })),
       successCount: current.stats.success,
       failureCount: current.stats.failure,
+      relayFailure,
     };
     send(
       res as HostResponseLike,

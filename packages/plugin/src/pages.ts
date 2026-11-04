@@ -8,6 +8,8 @@ export interface StatusView {
   devices: { id?: string; label: string; lastSeenAt: string }[];
   successCount: number;
   failureCount: number;
+  /** 仅桌面端可呈现的两类故障（FR-013）：远端没有服务方能渲染它们 */
+  relayFailure?: "unreachable" | "quota" | undefined;
 }
 
 const DEPLOY_COMMAND = "npx wrangler deploy --config relay/wrangler.toml";
@@ -56,6 +58,7 @@ function configuredSection(view: StatusView): string {
 
   return [
     "<section>",
+    relayFailureBanner(view.relayFailure),
     `<p>中转连接：<strong>${escapeHtml(view.connection)}</strong></p>`,
     `<p>入口地址：<code>${escapeHtml(view.relayUrl ?? "")}</code></p>`,
     '<div id="pairing-block">',
@@ -76,6 +79,14 @@ function configuredSection(view: StatusView): string {
     '<script src="/__anywhere/ui/ui.js"></script>',
     "</section>",
   ].join("");
+}
+
+function relayFailureBanner(failure: StatusView["relayFailure"]): string {
+  if (!failure) return "";
+  const spec = failure === "quota"
+    ? { title: "中转额度已用尽或被限制", hint: "请在 Cloudflare 控制台查看当日用量；额度按天重置。" }
+    : { title: "中转不可达", hint: "请检查地址是否正确、Worker 是否已部署，或重新填一次中转地址。" };
+  return `<aside class="error"><strong>${escapeHtml(spec.title)}</strong><p>${escapeHtml(spec.hint)}</p></aside>`;
 }
 
 function availabilityText(success: number, failure: number): string {
