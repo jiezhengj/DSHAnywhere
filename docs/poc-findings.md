@@ -93,6 +93,85 @@ dsh: warning: <pkg> declares no dsh.bundle — installed as a plain dependency, 
 
 **未验证**：真实网络切换、真实中转重启、桌面端退出后的恢复时间需要真机与真实部署，属 T073 环境验证范围。
 
+## 真实安装与冷启动（T073 / POC-4）
+
+**已实测**：把 `packages/plugin` 以 bundle 形式装进一个克隆自 desktop 的独立 profile，再用内置 CLI 冷启动 Web 形态。
+
+```bash
+cp -a ~/.dsh/profiles/desktop ~/.dsh/profiles/dshanywhere-cold
+ELECTRON_RUN_AS_NODE=1 "<app>" "<bin.js>" plugin --profile dshanywhere-cold add "$PWD/packages/plugin"
+ELECTRON_RUN_AS_NODE=1 "<app>" "<bin.js>" --profile dshanywhere-cold --port 50999 --no-open
+```
+
+实测结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| `--dump-config` 出现 `id: dsh-anywhere` 插入项 | 通过 |
+| 入口是 `.ts` 文件，DSH 能否加载 | **能**：Node 26 的 strip-types 直接执行，无需编译步骤 |
+| `GET /__anywhere` | 200，渲染「还没有中转」与 `npx wrangler deploy` 命令 |
+| `GET /__anywhere/api/status` | 200，返回契约化 JSON（`installation.state = unconfigured`） |
+| `GET /__anywhere/ui/qr.js` | 200，零依赖二维码脚本可用 |
+| `GET /p/<伪造令牌>` | 401，统一「链接无效或已过期」页面 |
+
+**过程中发现四个真实的宿主契约约束**（都已修复并回写到实现）：
+
+1. **`inject` 必须是服务名数组**。写成 `{ required, optional }` 会被 Cordis 当成名为 `required`/`optional` 的服务，条目永远 pending。
+2. **`apply` 不能返回对象**。返回 `PluginRuntime` 被判为 `TypeError: Invalid effect`，条目无法激活；改为返回 `void`。
+3. **Cordis 的 `ctx` 代理对未 inject 的属性直接抛错**。`ctx.muxPath`、`ctx.logger` 都不能直接读；实时端点路径改用契约常量 `MUX_PATH`，日志走 try/catch 兜底。
+4. **前缀路由的匹配规则是 `pathname === prefix || pathname.startsWith(prefix + "/")`**。注册 `"/__anywhere/"` 时 `/__anywhere/api/status` 不会命中；必须注册不带尾斜杠的 `"/__anywhere"`。
+
+## 版本兼容禁用（T068）
+
+`tests/integration/version-probe.test.ts` 覆盖三种宿主形态：
+
+- 无 `webServer`：不注册任何路由，记录「DSHAnywhere 已禁用」，连接状态保持 `idle`；
+- 有 `webServer` 但缺 `registerUpgrade`：同样禁用，**不出现半可用**；
+- 能力齐备：注册 `prefix:/__anywhere` 与 `prefix:/p` 两条路由。
+
+## quickstart 场景走查（T070）
+
+对照 [quickstart.md](../specs/001-browser-remote-access/quickstart.md) 的八个场景，如实记录当前证据等级：
+
+| 场景 | 结果 | 依据 |
+| --- | --- | --- |
+| 1 安装插件 | **实测通过** | 独立 profile 内 `dsh plugin add` + `--dump-config` 出现插入项 |
+| 2 部署中转 | **未实测** | 需要真实 Cloudflare 账号，`wrangler` 未在本机登录 |
+| 3 填入地址 | **单测通过** | `relay-url.test.ts` 覆盖 https/路径/查询串/末尾斜杠 |
+| 4 扫码配对 | **单测通过** | `pairing.test.ts` + `runtime.test.ts` 覆盖 303 + `__Host-` cookie + 一次性 |
+| 5 远端看到界面 | **本机链路通过** | `e2e-remote.test.ts` 证明帧路径端到端；真实 DSH WebUI 未接入 |
+| 6 日常复用 | **未实测** | 需连续 5 天真实使用（SC-002 / SC-004） |
+| 7 轮换与撤销 | **集成通过** | `lifecycle.test.ts`：轮换不动设备、撤销下一请求即拒 |
+| 8 断线与四类故障 | **受控测试通过** | `recovery.test.ts` 退避 500/1000/2000/5000 ms；`error-mapping.test.ts` 区分呈现位置 |
+
+**未验证清单**：真实 Cloudflare 部署与 `workers.dev` 连通性、真实手机扫码后的 DSH WebUI 首屏、真实网络切换的恢复秒数、连续 5 天的重复配对统计。这些都需要真实环境，无法在单机离线条件下替代。
+
+## Constitution 自检（T071）
+
+| 原则 | 结论 | 证据 |
+| --- | --- | --- |
+| I 原生边界 | **符合** | 只有 `adapter.ts` 接触宿主契约，对外仅 4 个包装函数；探测失败即禁用，不降级 |
+| II 作者零基础设施 | **符合** | 全仓无作者域名/账号/凭据（T074 检索为空）；中转由使用者自己部署 |
+| III 双端零安装 | **符合** | 浏览器端 0 客户端；桌面端一条 `dsh plugin add`；部署命令一次性 `npx` |
+| IV 可撤销的能力链接 | **符合** | 链接一次性 + 10 分钟过期 + `linkEpoch` 轮换；设备撤销实时生效，均有单测 |
+| V 本地优先与最小暴露 | **符合** | 只监听 loopback；远端访问管理页 404；上游 `Set-Cookie` 与平台头被剥离；中转可见明文已在安全文档中明示 |
+
+## POC-2：代理下资源路径是否需改写（T008）
+
+**已实证（静态分析 + 冷启动实测）**，结论是**不需要改写**：
+
+1. `dsh-web-frontend/dist/index.html` 里的资源引用全部是**相对路径**：
+   `./assets/index-BXV-oxvX.js`、`./manifest.webmanifest`、`./favicon.svg`。
+2. 前端 bundle 中 `pushState`/`replaceState`/`location.hash`/`pathname` 出现次数**均为 0**——
+   这个 SPA 没有 URL 路由，也就没有深链。
+3. 我们的代理把请求原样转发到 loopback，入口固定在根路径 `/`，因此相对路径在中转下与在本机下
+   解析结果完全一致。
+4. 冷启动实测：`GET /__anywhere`、`/__anywhere/api/status`、`/__anywhere/ui/qr.js` 均正常返回，
+   静态资源不受前缀影响。
+
+**风险点在别处**：如果将来 DSH 引入 URL 路由或把入口挂到子路径，相对资源路径会失效；届时
+需要在 `adapter.ts` 增加 `rewriteLoopbackUrls` 开关（已在风险表中登记），而不是现在提前实现。
+
 ## POC-1：请求密度与响应体量（T007）
 
 **结论：未开始。** 需要真实长任务会话 + 流量采样，尚未执行。

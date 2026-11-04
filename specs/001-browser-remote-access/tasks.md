@@ -41,8 +41,8 @@
 
 ### 平台与契约验证（先做，失败则重规划）
 
-- [ ] T007 POC-1：用真实会话采样一轮长任务的请求密度与单次响应体量（对照 research.md R1/R5），把数字与结论写入 `docs/poc-findings.md`
-- [ ] T008 POC-2：起临时 Host + `wrangler dev` 中转 + 无头浏览器，抓首屏全部请求 URL，确认无指向 `127.0.0.1:<port>` 的绝对地址（R7）；若存在，记录需注入的改写规则到 `docs/poc-findings.md`
+- [ ] T007 **阻塞：需真实长任务会话** POC-1：用真实会话采样一轮长任务的请求密度与单次响应体量（对照 research.md R1/R5），把数字与结论写入 `docs/poc-findings.md`。本机无法在不产生真实模型调用与长任务的前提下复现，且现有并发/分片行为已由 `e2e-remote.test.ts`、`recovery.test.ts` 覆盖，故标注阻塞而非完成。
+- [x] T008 POC-2：起临时 Host + `wrangler dev` 中转 + 无头浏览器，抓首屏全部请求 URL，确认无指向 `127.0.0.1:<port>` 的绝对地址（R7）；若存在，记录需注入的改写规则到 `docs/poc-findings.md`
 - [x] T009 POC-3：验证 `dsh plugin --profile desktop add` 的挂载行为（R10）——已确认为「包声明 `dsh.bundle` 即成为补丁层」，无需手改用户补丁层；结论见 `docs/poc-findings.md`
 
 ### 协议层
@@ -198,15 +198,15 @@
 
 **Purpose**: 跨故事收尾、文档、合规自检
 
-- [ ] T066 [P] 编写 `README.md`：这是什么、组成（插件 + 中转）、三条命令速览、指向 `docs/`
-- [ ] T067 [P] 文档一致性校对 `docs/**`、`README.md`、`packages/plugin/ui/index.html`：术语（中转/安装/设备/能力链接/设备凭证）全仓统一；VPS/NAS 明确标注"暂不支持"
-- [ ] T068 版本兼容禁用的端到端验证 `tests/integration/version-probe.mjs`：模拟能力缺失 → 入口禁用且状态页提示，不出现半可用
-- [ ] T069 全量 `npm run typecheck` + `npm test` 通过，无跳过用例
-- [ ] T070 按 [quickstart.md](quickstart.md) 走完 SC-001~SC-010，结果写入 `docs/poc-findings.md` 的结果表
-- [ ] T071 按 [Constitution](../../.specify/memory/constitution.md) 逐条自检并把结论写入 `docs/poc-findings.md`
-- [ ] T072 清理：临时脚本、调试日志、未使用的导出；确认无 `TODO` 残留
-- [ ] T073 发布形态验证：`dsh plugin --profile desktop add` 安装本地包并冷启动一次
-- [ ] T074 提交前检查 `packages/**`、`docs/**`、`README.md`：全仓检索无作者域名/账号/Token；无凭证明文；文档语言为简体中文
+- [x] T066 [P] 编写 `README.md`：这是什么、组成（插件 + 中转）、三条命令速览、指向 `docs/`
+- [x] T067 [P] 文档一致性校对 `docs/**`、`README.md`、`packages/plugin/ui/index.html`：术语（中转/安装/设备/能力链接/设备凭证）全仓统一；VPS/NAS 明确标注"暂不支持"
+- [x] T068 版本兼容禁用的端到端验证 `tests/integration/version-probe.test.ts`：模拟能力缺失 → 入口禁用且状态页提示，不出现半可用
+- [x] T069 全量 `pnpm run typecheck` + `pnpm test` 通过，无跳过用例
+- [x] T070 按 [quickstart.md](quickstart.md) 走完 SC-001~SC-010，结果写入 `docs/poc-findings.md` 的结果表
+- [x] T071 按 [Constitution](../../.specify/memory/constitution.md) 逐条自检并把结论写入 `docs/poc-findings.md`
+- [x] T072 清理：临时脚本、调试日志、未使用的导出；确认无 `TODO` 残留
+- [x] T073 发布形态验证：`dsh plugin --profile desktop add` 安装本地包并冷启动一次
+- [x] T074 提交前检查 `packages/**`、`docs/**`、`README.md`：全仓检索无作者域名/账号/Token；无凭证明文；文档语言为简体中文
 
 ---
 

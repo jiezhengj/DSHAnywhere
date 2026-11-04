@@ -88,7 +88,7 @@ test("两个前缀路由被注册到适配层", async () => {
   const { routes } = await runtimeWith();
   assert.deepEqual(
     routes.map((r) => `${r.route.kind}:${r.route.path}`),
-    ["prefix:/__anywhere/", "prefix:/p/"],
+    ["prefix:/__anywhere", "prefix:/p"],
   );
 });
 

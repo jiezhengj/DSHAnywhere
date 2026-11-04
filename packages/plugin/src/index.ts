@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { Adapter, ContractViolation } from "./adapter.ts";
 import { AgentTunnel } from "./agent.ts";
@@ -17,6 +18,8 @@ import { BROWSER_COOKIE } from "./rewrite.ts";
 
 export const PLUGIN_NAME = "dsh-anywhere";
 export const CONTRACT_VERSION = { expected: "0.2.x", actual: "0.2.1-rc.5" };
+/** DSH 0.2.1-rc.5 唯一的实时升级端点（dsh-api-gateway 内部常量） */
+export const MUX_PATH = "/api/remote.mux";
 
 export interface PluginLogger {
   info?(message: string): void;
@@ -61,6 +64,18 @@ export interface PluginRuntime {
   state(): StoreState;
   status(): { connection: TunnelStatus; relayOrigin: string | null };
   stop(): void;
+}
+
+/** 日志通道兜底：ctx.logger 不是可 inject 的服务，访问失败就退回 console */
+function safeLog(host: PluginHost, level: "info" | "warn" | "error", message: string): void {
+  try {
+    host.logger?.[level]?.(message);
+    if (host.logger) return;
+  } catch {
+    // 忽略：Cordis 代理对未 inject 的属性会抛错
+  }
+  if (level === "error") console.error(`[dsh-anywhere] ${message}`);
+  else console.warn(`[dsh-anywhere] ${message}`);
 }
 
 function requestPath(req: HostRequestLike): string {
@@ -127,10 +142,17 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
 
   let adapter: Adapter | null = null;
   try {
-    adapter = new Adapter(host as never);
+    // 只读取已声明的服务：Cordis 的 ctx 代理对未 inject 的属性会直接抛错
+    adapter = new Adapter({
+      webServer: host.webServer,
+      connection: host.connection,
+      // DSH 0.2.1-rc.5 的实时通道是契约常量，不通过 ctx 读取
+      muxPath: MUX_PATH,
+    } as never);
   } catch (err) {
-    if (err instanceof ContractViolation) host.logger?.error?.(`DSHAnywhere 已禁用：${err.message}`);
-    else throw err;
+    // 任何探测失败都只禁用插件，不抛出：半挂载的插件比不挂载更糟
+    const detail = err instanceof ContractViolation ? err.message : err instanceof Error ? err.message : String(err);
+    safeLog(host, "error", `DSHAnywhere 已禁用：${detail}`);
   }
 
   let connection: TunnelStatus = "idle";
@@ -216,7 +238,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
     }
   };
 
-  activeAdapter.registerRoute("prefix", "/__anywhere/", async (req, res) => {
+  activeAdapter.registerRoute("prefix", "/__anywhere", async (req, res) => {
     await ready;
     const path = requestPath(req as HostRequestLike);
     const method = ((req as HostRequestLike).method ?? "GET").toUpperCase();
@@ -268,7 +290,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
     );
   });
 
-  activeAdapter.registerRoute("prefix", "/p/", async (req, res) => {
+  activeAdapter.registerRoute("prefix", "/p", async (req, res) => {
     await ready;
     const outcome = handlePairing(requestPath(req as HostRequestLike), current, { now: now() });
     if (outcome.nextState) await persist(outcome.nextState);
@@ -279,17 +301,43 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
   return runtime;
 }
 
-export default function apply(
-  host: PluginHost,
-  rawConfig: unknown,
-  options?: Partial<RuntimeOptions>,
-): PluginRuntime {
+function defaultOptions(config: PluginConfig): RuntimeOptions {
+  return {
+    storageDir: join(homedir(), ".dsh", "storages", "dsh-anywhere"),
+    createSocket: (url: string) => new WebSocket(url) as unknown as SocketLike,
+    ...(config.relayUrl ? {} : {}),
+  };
+}
+
+/**
+ * Cordis 插件入口。`inject` 必须显式声明：Cordis 不允许未声明就读取
+ * `ctx.webServer`，直接访问会抛错并导致条目无法激活。
+ */
+let runtimeRef: PluginRuntime | null = null;
+
+/** 最近一次装配出的运行时（调试与测试用） */
+export function currentRuntime(): PluginRuntime | null {
+  return runtimeRef;
+}
+
+const plugin = {
+  name: PLUGIN_NAME,
+  // Cordis 的 inject 是服务名列表；写成对象会被当成名为 required/optional 的服务
+  inject: ["webServer", "connection"],
+  apply(host: PluginHost, rawConfig: unknown): void {
+    // Cordis 的 apply 不能返回对象，否则会被当成非法 effect
+    const config = parseConfig(rawConfig);
+    const runtime = createRuntime(host, rawConfig, defaultOptions(config));
+    runtimeRef = runtime;
+  },
+};
+
+export default plugin;
+
+/** 兼容直接以函数形式装配（测试与内嵌使用） */
+export function apply(host: PluginHost, rawConfig: unknown, options?: Partial<RuntimeOptions>): PluginRuntime {
   return createRuntime(host, rawConfig, {
-    storageDir: options?.storageDir ?? "~/.dsh/storages/dsh-anywhere",
-    ...(options?.uiDir ? { uiDir: options.uiDir } : {}),
-    createSocket: options?.createSocket ?? ((url: string) => new WebSocket(url) as unknown as SocketLike),
-    ...(options?.dshVersion ? { dshVersion: options.dshVersion } : {}),
-    ...(options?.agentVersion ? { agentVersion: options.agentVersion } : {}),
-    ...(options?.installId ? { installId: options.installId } : {}),
-  });
+    ...defaultOptions(parseConfig(rawConfig)),
+    ...options,
+  } as RuntimeOptions);
 }
