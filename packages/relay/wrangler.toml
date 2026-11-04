@@ -1,4 +1,18 @@
+# DSHAnywhere 中转：使用者的 Cloudflare 账号自行部署
+# 部署：npx wrangler deploy --config relay/wrangler.toml
 name = "dsh-anywhere-relay"
 main = "src/index.ts"
-compatibility_date = "2025-01-01"
+compatibility_date = "2025-01-15"
 workers_dev = true
+
+# v1：一台中转对应一台电脑，installId 取默认值即可
+[vars]
+DSH_INSTALL_ID = "default"
+
+[[durable_objects.bindings]]
+name = "RELAY_OBJECT"
+class_name = "RelayObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayObject"]

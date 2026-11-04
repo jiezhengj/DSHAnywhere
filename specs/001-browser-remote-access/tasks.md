@@ -52,18 +52,18 @@
 
 ### 插件基础
 
-- [ ] T012 [P] 实现状态存储 `packages/plugin/src/store.ts`：`schemaVersion` 校验、临时文件 + rename 原子写、文件 0600、损坏文件改名保留，测试 `tests/unit/store.test.ts`
-- [ ] T013 实现适配层骨架 `packages/plugin/src/adapter.ts`：能力断言（A1/A3/A4），并对外只暴露 `registerRoute()`/`registerUpgradeRoute()`/`getLoopbackOrigin()`/`mintHostCookie()` 四个包装（其它模块不得直接持有 `webServer`/`connection`），`mintHostCookie()` 在 401 时重取一次；测试 `tests/unit/adapter.test.ts`（用 fake webServer/connection）
-- [ ] T014 [P] 实现契约版本探测 `packages/plugin/src/version.ts`：四项能力断言 + `/api/remote.mux` 存在性探测（期望 401/403 而非 404），失败返回 `disabled` 与原因
-- [ ] T015 [P] 实现日志脱敏 `packages/plugin/src/redact.ts`：URL 中 `token`/`p/` 段与 cookie 值的掩码规则，测试 `tests/unit/redact.test.ts`
+- [x] T012 [P] 实现状态存储 `packages/plugin/src/store.ts`：`schemaVersion` 校验、临时文件 + rename 原子写、文件 0600、损坏文件改名保留，测试 `tests/unit/store.test.ts`
+- [x] T013 实现适配层骨架 `packages/plugin/src/adapter.ts`：能力断言（A1/A3/A4），并对外只暴露 `registerRoute()`/`registerUpgradeRoute()`/`getLoopbackOrigin()`/`mintHostCookie()` 四个包装（其它模块不得直接持有 `webServer`/`connection`），`mintHostCookie()` 在 401 时重取一次；测试 `tests/unit/adapter.test.ts`（用 fake webServer/connection）
+- [x] T014 [P] 实现契约版本探测 `packages/plugin/src/version.ts`：四项能力断言 + `/api/remote.mux` 存在性探测（期望 401/403 而非 404），失败返回 `disabled` 与原因
+- [x] T015 [P] 实现日志脱敏 `packages/plugin/src/redact.ts`：URL 中 `token`/`p/` 段与 cookie 值的掩码规则，测试 `tests/unit/redact.test.ts`
 
 ### 隧道与中转
 
-- [ ] T016 [P] 实现 Worker 入口路由 `packages/relay/src/index.ts`：`/__dsh_agent` 交 DO、`/__relay/health` 自答、其余路径按 `installId` 转 DO、剥离 `cf-*`/`x-forwarded-*` 请求头
-- [ ] T017 实现 DO 会话对象 `packages/relay/src/relay-object.ts`：`idFromName(installId)`、hibernatable WebSocket（`acceptWebSocket`）、agent 单例校验、`AGENT_HELLO`/`RELAY_HELLO_ACK` 握手与版本拒绝（`4002`/`4003`）
-- [ ] T018 实现隧道客户端 `packages/plugin/src/agent.ts`：出站 WSS、首帧 hello、心跳 25s、指数退避（0.5/1/2/5s，±20% 抖动），测试 `tests/unit/agent.test.ts`（本地 WS 替身）
-- [ ] T019 [P] 落地中转部署配置 `packages/relay/wrangler.toml`：DO binding、`migrations[].new_sqlite_classes`、`workers_dev = true`、`compatibility_date`
-- [ ] T020 [P] 实现统一错误码与错误页 `packages/plugin/src/errors.ts`、`packages/relay/src/errors.ts`：`protocol`/`protocol-version`/`agent-already-connected`/`backpressure`/`upstream-unreachable`/`quota-exceeded`
+- [x] T016 [P] 实现 Worker 入口路由 `packages/relay/src/index.ts`：`/__dsh_agent` 交 DO、`/__relay/health` 自答、其余路径按 `installId` 转 DO、剥离 `cf-*`/`x-forwarded-*` 请求头
+- [x] T017 实现 DO 会话对象 `packages/relay/src/relay-object.ts`：`idFromName(installId)`、hibernatable WebSocket（`acceptWebSocket`）、agent 单例校验、`AGENT_HELLO`/`RELAY_HELLO_ACK` 握手与版本拒绝（`4002`/`4003`）
+- [x] T018 实现隧道客户端 `packages/plugin/src/agent.ts`：出站 WSS、首帧 hello、心跳 25s、指数退避（0.5/1/2/5s，±20% 抖动），测试 `tests/unit/agent.test.ts`（本地 WS 替身）
+- [x] T019 [P] 落地中转部署配置 `packages/relay/wrangler.toml`：DO binding、`migrations[].new_sqlite_classes`、`workers_dev = true`、`compatibility_date`
+- [x] T020 [P] 实现统一错误码与错误页 `packages/plugin/src/errors.ts`、`packages/relay/src/errors.ts`：`protocol`/`protocol-version`/`agent-already-connected`/`backpressure`/`upstream-unreachable`/`quota-exceeded`
 
 **Checkpoint**: 协议可编解码、插件能连上中转并完成握手、状态可安全落盘
 
