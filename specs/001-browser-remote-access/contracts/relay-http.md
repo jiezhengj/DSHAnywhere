@@ -1,0 +1,81 @@
+# 契约：浏览器 ↔ 中转 的 HTTP/WS 表面
+
+**Feature**: `001-browser-remote-access` | **适用**: Cloudflare Worker（`packages/relay`）
+
+中转对浏览器只暴露一件事：**把请求原样送到桌面端，把响应原样送回**。除本文件列出的几个中转自有的状态页外，中转不解释任何路径或请求体。
+
+## 1. 路径划分
+
+| 路径 | 处理方 | 说明 |
+| --- | --- | --- |
+| `/__dsh_agent` | 中转自有 | agent 的 WSS 通道；浏览器访问一律 404 |
+| `/__relay/health` | 中转自有 | 返回 `{ ok: true, protocolVersion: 1, agent: "connected" \| "absent" }`，供排障与状态页使用 |
+| 其它所有路径（含 `/`、`/assets/*`、`/api/*`） | 转发给 agent | 不做路径改写、不做前缀剥离 |
+
+## 2. 浏览器首次访问与配对
+
+```text
+GET https://<relay>/p/<capability-token>
+  → 转发给 agent
+  → agent 校验令牌（10 分钟有效，一次性）
+  → 2026 场景 A：有效 → 303 Location: / , Set-Cookie: __Host-dshanywhere=…; HttpOnly; Secure; SameSite=Strict; Max-Age=…
+  → 场景 B：无效/过期/已用 → 401 + 固定提示页（不区分原因）
+```
+
+- **中转不解析、不校验、不改写** `Set-Cookie`；它只是把响应头和响应体搬回浏览器。
+- 令牌只出现在首跳 URL 中；303 之后浏览器地址栏只保留 `https://<relay>/`，不残留凭证（FR-005）。
+- 中转不得把含令牌的 URL 写入日志（Constitution 安全约束）。
+
+## 3. 常规请求
+
+- 方法、路径、查询串、请求头、请求体原样转发；`Cookie` 原样转发。
+- 响应状态、响应头、响应体原样回传。
+- **中转移除**的请求头：`cf-connecting-ip`、`cf-ray`、`cdn-loop`、`x-forwarded-*`、`true-client-ip`（避免把中转的接入信息当成 DSH 的信任输入）。
+- **中转追加**的响应头：`Referrer-Policy: no-referrer`（若 agent 未设置）、`Cache-Control: no-store`（仅对 `/` 与 `/p/*`）。
+- **不压缩**：压缩交给 agent 侧由 DSH 自行处理；中转不解压、不重压缩，避免 CPU 超限（10 ms/请求）。
+
+## 4. WebSocket
+
+| 项 | 规则 |
+| --- | --- |
+| 允许升级的路径 | 仅 `/api/remote.mux`（DSH 的唯一实时端点，见 `dsh-adapter.md`） |
+| 其它路径的 upgrade | 404，关闭 socket（与 DSH 自身"精确匹配"行为一致） |
+| 子协议 | 原样透传 `Sec-WebSocket-Protocol` |
+| 心跳 | 中转对浏览器每 25 秒发 ping；同时依赖 agent 侧 `PING` 帧维护隧道 |
+| 空闲超时 | 隧道断开后 10 秒内关闭所有浏览器 WS，触发前端自行重连 |
+
+## 5. 失败与状态码（FR-013）
+
+| 情况 | 状态码 | 页面文案（简体中文，统一风格） |
+| --- | --- | --- |
+| agent 未连接 | 503 | 电脑端未运行：请确认桌面版 DeepSeek Harness 已启动并保持后台常驻 |
+| agent 连接但 loopback 不可达 | 502 | 电脑端暂时无法响应：请检查桌面端进程是否卡住 |
+| 中转额度耗尽/被平台限制 | 503 | 中转额度已用尽：请在 Cloudflare 控制台查看当日用量 |
+| 凭证无效/过期/已撤销 | 401 | 链接无效或已过期：请在电脑端重新生成配对链接 |
+| 请求超时（30 s 无响应头） | 504 | 电脑端响应超时：请稍后重试或检查桌面端网络 |
+| 隧道在途断开 | 502 | 连接已中断：正在自动重连，请稍后刷新 |
+
+- 所有错误页：`content-type: text/html; charset=utf-8`、单文件内联样式、无外部资源、无堆栈、无版本号、无内部路径。
+- 错误页必须**可区分**上述六类（这是 FR-013 的验收点），但 401 内部不区分失效原因。
+
+## 6. 限额与保护
+
+| 项 | 值 | 理由 |
+| --- | --- | --- |
+| 单请求体上限 | 25 MiB | DSH 自身有请求体上限；超过即 413，避免占满 DO 内存 |
+| 单响应体上限 | 不设硬上限，靠分片 + 背压 | 会话历史可能很大 |
+| 并发流上限 | 16 / agent | 单用户场景足够；超出排队 2 秒后 503 |
+| 请求排队等待 agent 上限 | 5 秒 | 超过回 503，不无限等待 |
+
+## 7. 开发例外
+
+在本地联调时，允许中转以 `http://127.0.0.1:<port>` 运行（`wrangler dev`）。此时：
+
+- 允许 `http://` 源；Cookie 的 `Secure` 属性由 agent 判断（与 DSH 自身"仅 TLS 时 Secure"的规则一致）。
+- 开发模式下必须在日志显著提示"非生产形态"。
+
+## 8. 隐私
+
+- 中转不记录请求/响应体、Cookie、URL 查询串。
+- 不启用 Cloudflare Analytics Engine 或 Web Analytics 的自定义字段上报。
+- `console.log` 仅允许输出：连接建立/断开、帧类型计数、错误码。禁止输出任何请求内容。
