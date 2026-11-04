@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "assess": {
+      "version": "1.0.2",
+      "source": "local",
+      "manifest_hash": "sha256:c446e95c0cfc9482eb794fa90d428c5da3257162515db2cebd9ae3ec534d1919",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "codex": [
+          "speckit.assess.intake",
+          "speckit.assess.research",
+          "speckit.assess.define",
+          "speckit.assess.shape",
+          "speckit.assess.decide"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-11-04T07:53:31.265717+00:00"
+    }
+  }
+}
