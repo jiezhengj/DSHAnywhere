@@ -24,12 +24,12 @@
 
 **Purpose**: 建立可编译、可测试、可部署的空骨架
 
-- [ ] T001 初始化 workspace 根：`package.json`（`workspaces: ["packages/*"]`、`"type": "module"`）与 `tsconfig.base.json`（`strict`、`target ES2022`、`moduleResolution bundler`）
-- [ ] T002 [P] 建立协议包骨架：`packages/protocol/package.json`、`packages/protocol/tsconfig.json`、`packages/protocol/src/index.ts`
-- [ ] T003 [P] 建立插件包骨架：`packages/plugin/package.json`（`@deepseek-ai/cordis` 为 peerDependency）、`packages/plugin/tsconfig.json`
-- [ ] T004 [P] 建立中转包骨架：`packages/relay/package.json`、`packages/relay/wrangler.toml`（空绑定）、`packages/relay/src/index.ts`
-- [ ] T005 配置根脚本 `package.json`：`test`（`node --test`）、`typecheck`（`tsc -b --noEmit`）、`build`
-- [ ] T006 [P] 配置 `.prettierrc.json` 与 `.gitignore`（追加 `dist/`、`.wrangler/`、`node_modules/`）
+- [x] T001 初始化 workspace 根：`package.json`（`workspaces: ["packages/*"]`、`"type": "module"`）与 `tsconfig.base.json`（`strict`、`target ES2022`、`moduleResolution bundler`）
+- [x] T002 [P] 建立协议包骨架：`packages/protocol/package.json`、`packages/protocol/tsconfig.json`、`packages/protocol/src/index.ts`
+- [x] T003 [P] 建立插件包骨架：`packages/plugin/package.json`（`@deepseek-ai/cordis` 为 peerDependency）、`packages/plugin/tsconfig.json`
+- [x] T004 [P] 建立中转包骨架：`packages/relay/package.json`、`packages/relay/wrangler.toml`（空绑定）、`packages/relay/src/index.ts`
+- [x] T005 配置根脚本 `package.json`：`test`（`node --test`）、`typecheck`（`tsc -b --noEmit`）、`build`
+- [x] T006 [P] 配置 `.prettierrc.json` 与 `.gitignore`（追加 `dist/`、`.wrangler/`、`node_modules/`）
 
 ---
 
@@ -47,8 +47,8 @@
 
 ### 协议层
 
-- [ ] T010 [P] 实现帧编解码 `packages/protocol/src/codec.ts`（12 字节头：version/type/flags/streamId/length），测试 `tests/unit/codec.test.ts` 覆盖越界长度、未知 type、空载荷
-- [ ] T011 [P] 定义帧类型与常量 `packages/protocol/src/frames.ts`、`packages/protocol/src/constants.ts`（`PROTOCOL_VERSION=1`、`MAX_FRAME_BYTES=65536`、`WINDOW_BYTES=262144`）
+- [x] T010 [P] 实现帧编解码 `packages/protocol/src/codec.ts`（12 字节头：version/type/flags/streamId/length），测试 `tests/unit/codec.test.ts` 覆盖越界长度、未知 type、空载荷
+- [x] T011 [P] 定义帧类型与常量 `packages/protocol/src/frames.ts`、`packages/protocol/src/constants.ts`（`PROTOCOL_VERSION=1`、`MAX_FRAME_BYTES=65536`、`WINDOW_BYTES=262144`）
 
 ### 插件基础
 

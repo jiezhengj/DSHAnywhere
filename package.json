@@ -1,0 +1,21 @@
+{
+  "name": "dsh-anywhere",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p packages/protocol --noEmit && tsc -p packages/plugin --noEmit && tsc -p packages/relay --noEmit",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "build": "tsc -p packages/protocol && tsc -p packages/plugin && tsc -p packages/relay"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^5.6.0"
+  }
+}

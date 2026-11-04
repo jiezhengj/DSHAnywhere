@@ -1,2 +1,8 @@
 /.agent-state/spec_kit_component_update_cache.json
 __pycache__/
+
+# 构建产物与依赖
+node_modules/
+dist/
+.wrangler/
+*.tsbuildinfo
