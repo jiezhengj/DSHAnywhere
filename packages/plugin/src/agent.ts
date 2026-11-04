@@ -39,6 +39,31 @@ const CLOSE_PROTOCOL_VERSION = 4002;
 const CLOSE_AGENT_ALREADY_CONNECTED = 4003;
 
 /** 出站隧道：握手、心跳、退避重连。传输由 deps.createSocket 注入，便于测试与替换。 */
+/** 失败原因分类：用于状态页与重连策略（不暴露给远端页面） */
+export type FailureReason =
+  | "hello-timeout"
+  | "protocol-version"
+  | "agent-already-connected"
+  | "protocol-error"
+  | "dns"
+  | "tls"
+  | "unauthorized"
+  | "quota"
+  | "network";
+
+export function classifyFailure(code: number, message = ""): FailureReason {
+  if (code === 4001) return "hello-timeout";
+  if (code === 4002) return "protocol-version";
+  if (code === 4003) return "agent-already-connected";
+  if (code === 4004) return "protocol-error";
+  if (code === 4401) return "unauthorized";
+  if (code === 4402) return "quota";
+  const lower = message.toLowerCase();
+  if (lower.includes("enotfound") || lower.includes("getaddrinfo")) return "dns";
+  if (lower.includes("certificate") || lower.includes("cert") || lower.includes("tls") || lower.includes("ssl")) return "tls";
+  return "network";
+}
+
 export class AgentTunnel {
   readonly #options: TunnelOptions;
   readonly #createSocket: (url: string) => SocketLike;
@@ -48,6 +73,8 @@ export class AgentTunnel {
 
   #socket: SocketLike | null = null;
   #status: TunnelStatus = "idle";
+  #failure: FailureReason | null = null;
+  #lastError = "";
   #attempt = 0;
   #stopped = false;
   #timers = new Set<unknown>();
@@ -62,6 +89,10 @@ export class AgentTunnel {
 
   get status(): TunnelStatus {
     return this.#status;
+  }
+
+  get failure(): FailureReason | null {
+    return this.#failure;
   }
 
   start(): void {
@@ -120,23 +151,27 @@ export class AgentTunnel {
     });
 
     socket.addEventListener("close", (event) => {
-      const code = (event as { code?: number }).code ?? 1006;
+      const ev = event as { code?: number; reason?: string };
+      const code = ev.code ?? 1006;
       this.#socket = null;
       this.#clearHeartbeat();
       if (this.#stopped) return;
-      if (code === CLOSE_PROTOCOL_VERSION) {
-        this.#setStatus("failed", "protocol-version");
+      this.#failure = classifyFailure(code, `${ev.reason ?? ""} ${this.#lastError}`);
+      if (code === CLOSE_PROTOCOL_VERSION || code === CLOSE_AGENT_ALREADY_CONNECTED) {
+        this.#setStatus("failed", this.#failure);
         return;
       }
-      if (code === CLOSE_AGENT_ALREADY_CONNECTED) {
-        this.#setStatus("failed", "agent-already-connected");
+      // 凭证无效与额度受限需要人工处理，不无限重试
+      if (this.#failure === "unauthorized" || this.#failure === "quota") {
+        this.#setStatus("failed", this.#failure);
         return;
       }
       this.#scheduleReconnect();
     });
 
-    socket.addEventListener("error", () => {
-      // 具体原因由随后的 close 事件给出，这里不重复处理
+    socket.addEventListener("error", (event) => {
+      const err = event as { message?: string; error?: { message?: string } };
+      this.#lastError = err.message ?? err.error?.message ?? "";
     });
   }
 
@@ -190,6 +225,7 @@ export class AgentTunnel {
   }
 
   #setStatus(status: TunnelStatus, detail?: string): void {
+    if (status === "connected") this.#failure = null;
     this.#status = status;
     this.#options.onStatus?.(status, detail);
   }

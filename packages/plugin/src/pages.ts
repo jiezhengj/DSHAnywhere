@@ -69,13 +69,19 @@ function configuredSection(view: StatusView): string {
     '<button type="button" id="rotate">轮换链接</button>',
     '<button type="button" id="disable">关闭远程接入</button>',
     "</div>",
-    `<p>可访问率：${view.successCount} 成功 / ${view.failureCount} 失败</p>`,
+    `<p>可访问率：${availabilityText(view.successCount, view.failureCount)}（${view.successCount} 成功 / ${view.failureCount} 失败，24 小时窗口）</p>`,
     "<h2>已配对设备</h2>",
     `<ul id="devices">${devices}</ul>`,
     '<script src="/__anywhere/ui/qr.js"></script>',
     '<script src="/__anywhere/ui/ui.js"></script>',
     "</section>",
   ].join("");
+}
+
+function availabilityText(success: number, failure: number): string {
+  const total = success + failure;
+  if (total === 0) return "暂无请求";
+  return `${((success / total) * 100).toFixed(1)}%`;
 }
 
 /** 本机管理页；只有 loopback 可达，远端入口不暴露它 */

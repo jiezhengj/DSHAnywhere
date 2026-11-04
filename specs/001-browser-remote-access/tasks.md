@@ -178,17 +178,17 @@
 
 ### Tests for US5
 
-- [ ] T058 [P] [US5] 单测：访问统计窗口与可访问率计算（成功/失败计数、24 小时滑动），`tests/unit/stats.test.ts`
-- [ ] T059 [P] [US5] 集成脚本：`tests/integration/recovery.mjs` 覆盖四种中断并记录恢复秒数
+- [x] T058 [P] [US5] 单测：访问统计窗口与可访问率计算（成功/失败计数、24 小时滑动），`tests/unit/stats.test.ts`
+- [x] T059 [P] [US5] 集成脚本：`tests/integration/recovery.test.ts` 覆盖四种中断并记录恢复秒数
 
 ### Implementation for US5
 
-- [ ] T060 [US5] 连接状态机与重连调优 `packages/plugin/src/agent.ts`：`idle/connecting/connected/reconnecting/failed` 与失败原因分类（DNS/证书/401/版本）
-- [ ] T061 [US5] 错误页与分类映射 `packages/plugin/src/pages.ts`、`packages/relay/src/errors.ts`：远端可渲染的四类（电脑端未运行/连接已中断/超时/凭证无效）+ 仅桌面端状态页呈现的两类（中转不可达/额度受限），按 `contracts/relay-http.md §5` 的「呈现位置」列
-- [ ] T062 [US5] 状态 API 主接口 `GET /__anywhere/api/status` `packages/plugin/src/status.ts`（路由经 `adapter.registerRoute()`）
-- [ ] T063 [US5] 访问统计 `packages/plugin/src/stats.ts`：只记计数与分类，不记 URL/正文
-- [ ] T064 [US5] 管理页状态区 `packages/plugin/ui/index.html`、`packages/plugin/ui/ui.js`：连接状态、地址、二维码、设备列表、最近访问、可访问率
-- [ ] T065 [US5] 把恢复时间与可访问率实测写入 `docs/poc-findings.md`
+- [x] T060 [US5] 连接状态机与重连调优 `packages/plugin/src/agent.ts`：`idle/connecting/connected/reconnecting/failed` 与失败原因分类（DNS/证书/401/版本）
+- [x] T061 [US5] 错误页与分类映射 `packages/plugin/src/pages.ts`、`packages/relay/src/errors.ts`：远端可渲染的四类（电脑端未运行/连接已中断/超时/凭证无效）+ 仅桌面端状态页呈现的两类（中转不可达/额度受限），按 `contracts/relay-http.md §5` 的「呈现位置」列
+- [x] T062 [US5] 状态 API 主接口 `GET /__anywhere/api/status` `packages/plugin/src/status.ts`（路由经 `adapter.registerRoute()`）
+- [x] T063 [US5] 访问统计 `packages/plugin/src/stats.ts`：只记计数与分类，不记 URL/正文
+- [x] T064 [US5] 管理页状态区 `packages/plugin/ui/index.html`、`packages/plugin/ui/ui.js`：连接状态、地址、二维码、设备列表、最近访问、可访问率
+- [x] T065 [US5] 把恢复时间与可访问率实测写入 `docs/poc-findings.md`
 
 **Checkpoint**: 五种用户故事全部可独立验证，SC-003/SC-005 有实测数据
 

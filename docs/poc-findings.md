@@ -75,6 +75,24 @@ dsh: warning: <pkg> declares no dsh.bundle — installed as a plain dependency, 
 
 **未验证（需真机环境）**：真实 DSH WebUI 的首屏资源加载、`/api/remote.mux` 实时流、`wrangler dev`/线上 Worker 的 WebSocket 行为。这些依赖真实会话与 Cloudflare 部署，见 T073。
 
+## 断线自愈与可访问率（US5，T058–T065）
+
+**已验证**：`tests/integration/recovery.test.ts` 用可控时钟驱动隧道状态机，实测四类中断的反应：
+
+| 场景 | 触发 | 实测行为 |
+| --- | --- | --- |
+| 网络切换 | close 1006 | 进入 `reconnecting`，首个退避窗口 **500 ms**（±20%）后重连 |
+| 中转重启 | close 1001 | 同上，不影响已建立的流（流由网关重建） |
+| 连续失败 | 多次 1006 | 退避严格为 **500 / 1000 / 2000 / 5000 ms** |
+| 凭证无效 | close 4401 | 进入 `failed`，**不自动重试**（需人工重新配对） |
+| 额度受限 | close 4402 | 进入 `failed`，**不自动重试**（次日恢复） |
+| 版本不兼容 | close 4002 | 进入 `failed`，不重试 |
+| DNS / 证书错误 | error 事件 | 分类为 `dns` / `tls`，进入重连并按退避重试 |
+
+**可访问率**：24 小时滑动窗口，`success / (success + failure)`；窗口过期自动归零，避免历史累计淹没近期状态。统计只记计数与分类，不记 URL 与正文（`packages/plugin/src/stats.ts`）。
+
+**未验证**：真实网络切换、真实中转重启、桌面端退出后的恢复时间需要真机与真实部署，属 T073 环境验证范围。
+
 ## POC-1：请求密度与响应体量（T007）
 
 **结论：未开始。** 需要真实长任务会话 + 流量采样，尚未执行。
