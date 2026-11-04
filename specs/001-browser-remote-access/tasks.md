@@ -210,6 +210,9 @@
 - [x] T075 [converge 补口] 状态页呈现仅桌面端可见的两类故障（中转不可达 / 额度已用尽），与 FR-013 对齐；`packages/plugin/src/pages.ts` + `tests/unit/pages.test.ts`
 - [x] T076 [真实部署验证] 在账号内 `wrangler deploy` 上线中转并端到端联调：健康检查、无 agent 时的 503 页、真实浏览器加载 DSH WebUI、`/api/remote.mux` 穿透；据此修复 6 个只在真实 Cloudflare 环境暴露的问题（Upgrade 头被剥、升级请求重包装、acceptWebSocket 混用、Blob 二进制帧、断连 send 抛错、非法关闭码），结论写入 `docs/poc-findings.md` POC-5
 
+- [x] T077 [真实配对验证] 用真实插件 + 真实中转验证配对链路：未配对 401、链接 303+设备 cookie、带 cookie 200、免操作复用、10 台上限 403、撤销后 401、撤销后可重新配对；并修复配对路径被鉴权拦截、设备 cookie 被当作上游 cookie 丢弃两个缺陷
+- [x] T078 [分发形态] 插件改为 esbuild 打包 `dist/index.js`（Node strip-types 不支持 node_modules 下的 .ts），`files` 补齐 `ui/` 与 `cordis.patch.yml`，`dsh plugin add` 安装即启动
+
 ---
 
 ## Dependencies & Execution Order

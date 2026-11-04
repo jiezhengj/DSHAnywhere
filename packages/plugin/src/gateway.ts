@@ -16,6 +16,7 @@ import type {
 } from "../../protocol/src/index.ts";
 import { FlowWindow, splitPayload } from "./flow.ts";
 import { filterResponseHeaders, rewriteRequestHeaders, toAbsoluteUrl } from "./rewrite.ts";
+import { BROWSER_COOKIE } from "./rewrite.ts";
 import { renderDisabledPage, renderUnauthorizedPage } from "./pages.ts";
 
 export interface WsClientLike {
@@ -141,7 +142,10 @@ export class Gateway {
 
     const url = toAbsoluteUrl(pending.head.path, this.#deps.loopbackOrigin);
 
-    const gate = this.#deps.authorize?.(pending.head.headers ?? {}) ?? "ok";
+    // 配对页本身必须免鉴权：否则未配对浏览器永远拿不到能力链接
+    const gate = isPairingPath(pending.head.path)
+      ? "ok"
+      : (this.#deps.authorize?.(pending.head.headers ?? {}) ?? "ok");
     if (gate !== "ok") {
       const head: HttpResponseHead = {
         status: 401,
@@ -161,9 +165,15 @@ export class Gateway {
         response = await this.#fetchWithCookie(url, pending, body, true);
       }
 
+      const responseHeaders = filterResponseHeaders(headersToObject(response.headers));
+      // 只放行插件自己签发的设备 cookie；loopback 的会话 cookie 仍然不能外泄
+      const ownCookies = (response.headers.getSetCookie?.() ?? []).filter((line) =>
+        line.startsWith(`${BROWSER_COOKIE}=`),
+      );
+      if (ownCookies.length > 0) responseHeaders["set-cookie"] = ownCookies[0]!;
       const head: HttpResponseHead = {
         status: response.status,
-        headers: filterResponseHeaders(headersToObject(response.headers)),
+        headers: responseHeaders,
       };
       this.#sendFrame(FrameType.HTTP_RESPONSE_HEAD, streamId, encodeJson(head));
 
@@ -281,6 +291,11 @@ export class Gateway {
  * 关闭码必须是 RFC6455 允许的值：undici 收到 0/1006/undefined 会抛 DOMException，
  * 而这类异常发生在 WS_CLOSE 回调里会直接带崩宿主进程（实测）。
  */
+/** 配对入口：`/p/<一次性令牌>` 必须在鉴权之前放行 */
+export function isPairingPath(path: string): boolean {
+  return /^\/p\/[A-Za-z0-9_-]{20,}$/.test(path.split("?")[0] ?? "");
+}
+
 function closeSafely(socket: WsClientLike, code: number | undefined, reason: string | undefined): void {
   const allowed =
     typeof code === "number" &&

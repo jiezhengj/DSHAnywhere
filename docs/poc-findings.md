@@ -224,10 +224,45 @@ ELECTRON_RUN_AS_NODE=1 "<app>" "<bin.js>" --profile dshanywhere-cold --port 5099
 - `cf deploy` 需要新的 `cloudflare.config.ts`（实验性新配置）；经典 `wrangler.toml` 项目仍建议用
   `npx wrangler deploy`，文档里的配置路径已修正为 `packages/relay/wrangler.toml`。
 
+### 真实配对链路（2026-11-04 实测，走真实 Cloudflare 中转）
+
+用真实插件（`dsh plugin add` 安装进独立 profile）+ 真实中转验证，全部通过：
+
+| 场景 | 结果 |
+| --- | --- |
+| 未配对访问入口 | `401` + 统一「需要配对」页 |
+| `POST /__anywhere/api/link` | 返回 `pairUrl`（中转域名 + `/p/<32 字符>`） |
+| 打开能力链接 | `303` + `Set-Cookie: __Host-dshanywhere=…`（`Path=/`、`Secure`、`HttpOnly`、`SameSite=Lax`） |
+| 带 cookie 再访问入口 | `200`，返回 DSH 首页 41 042 B |
+| 再次打开入口（免操作） | `200`（FR-006） |
+| 配满 10 台后再配对 | `403` + 「设备已达上限」页，active 设备数保持 10（FR-007） |
+| 撤销全部设备后访问 | `401`（FR-017） |
+| 撤销后重新配对 | `303` + `200` |
+
+**过程中修复的两个真实缺陷**：
+
+1. **配对路径被设备鉴权拦掉**：`/p/<token>` 也走网关的 `authorize`，未配对浏览器永远拿不到 cookie（401）。
+   现在 `/p/<一次性令牌>` 在鉴权前放行。
+2. **插件自己签发的设备 cookie 被当成上游 cookie 剥掉**：`filterResponseHeaders` 会丢弃所有 `Set-Cookie`
+   以防 loopback 会话 cookie 外泄，结果 `__Host-dshanywhere` 也被丢。现在只放行这一个名字。
+
+### 分发形态：必须发布编译产物
+
+`dsh plugin add` 把包装进 profile 的 `node_modules`，而 Node 的 strip-types **不允许**处理
+`node_modules` 下的 `.ts`，直接以 `src/index.ts` 作为入口会启动失败：
+
+```
+ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING
+```
+
+因此插件改为 esbuild 打包成单文件 `dist/index.js`（`pnpm run build`），`exports` 指向它，
+`files` 带上 `dist`、`ui`、`cordis.patch.yml`。改动后同一命令安装启动成功。
+`cordis.patch.yml` 曾因未列入 `files` 而丢失，导致 profile 拒绝加载（"failed to read overlay"），已修正。
+
 ### 仍未实测（不编造）
 
 - 手机真实扫码配对进 DSH WebUI（需要手机与真实浏览器会话）。
-- 真实配对链路经中转的完整流程（本次联调用的是网关侧直连，绕过配对，只验证了转发与实时通道）。
+- 真机（手机）上的完整交互流程与移动网络下的首屏时间。
 - 在 4G/Wi-Fi 切换下的秒级恢复数据。
 - 13 MB 首屏在移动网络下的首屏时间；桌面端经代理出口实测已达 10–20 s，移动网络预计更慢，
   与"速度由网络环境和 Worker 可连通性决定"的既定结论一致。

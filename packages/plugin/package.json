@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./dist/index.js"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*"
@@ -14,7 +14,11 @@
     }
   },
   "files": [
-    "src",
+    "dist",
+    "ui",
     "cordis.patch.yml"
-  ]
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --platform=node --packages=external --outfile=dist/index.js"
+  }
 }

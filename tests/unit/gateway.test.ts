@@ -215,3 +215,30 @@ test("文本帧以字符串形式送给宿主 WebSocket", async () => {
   });
   assert.deepEqual(sent.at(-1), '{"jsonrpc":"2.0"}');
 });
+
+test("配对路径跳过设备鉴权", async () => {
+  const sent: Frame[] = [];
+  let authorizeCalls = 0;
+  const gateway = new Gateway({
+    loopbackOrigin: "http://127.0.0.1:5",
+    mintHostCookie: async () => "c=1",
+    authorize: () => {
+      authorizeCalls += 1;
+      return "unpaired";
+    },
+    send: (bytes) => sent.push(decodeFrame(bytes)),
+    fetchImpl: async () =>
+      new Response("ok", { status: 303, headers: { location: "/?paired=1" } }),
+  });
+  await gateway.onFrame({
+    type: FrameType.HTTP_REQUEST_HEAD,
+    streamId: 4,
+    flags: 0,
+    payload: encodeJson({ method: "GET", path: "/p/abcdefghijklmnopqrstuvwxyz", headers: {} }),
+  });
+  await gateway.onFrame({ type: FrameType.HTTP_REQUEST_END, streamId: 4, flags: 0, payload: new Uint8Array() });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(authorizeCalls, 0, "配对路径不应触发设备鉴权");
+  const head = sent.find((f) => f.type === FrameType.HTTP_RESPONSE_HEAD);
+  assert.equal(JSON.parse(new TextDecoder().decode(head!.payload)).status, 303);
+});
