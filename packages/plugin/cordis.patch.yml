@@ -1,0 +1,9 @@
+# 本包以 DSH profile 的「补丁层（bundle）」形式加载。
+# `dsh plugin --profile <name> add <本包>` 会把包名追加到该 profile
+# package.json 的 dsh.profile.bundles 列表，本文件的 insert 项随即生效——
+# 使用者不需要手工编辑自己的 cordis.patch.yml（已实测，见 docs/poc-findings.md）。
+- insert:
+    - id: dsh-anywhere
+      name: "@dsh-anywhere/plugin"
+      config:
+        enabled: true

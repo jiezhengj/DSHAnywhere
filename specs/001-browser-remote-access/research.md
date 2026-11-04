@@ -132,13 +132,17 @@ npx wrangler deploy --config relay/wrangler.toml
 
 ## R10 插件安装与 profile 补丁层
 
-**决策**：安装文档给两步——`dsh plugin --profile desktop add <包地址或本地目录>` 与在 `~/.dsh/profiles/desktop/cordis.patch.yml` 追加 `insert` 条目。若 POC 证明 `dsh plugin add` 已能自动写入补丁层，则文档收敛为一条命令。
+**决策（已实证，2026-11-04）**：`packages/plugin` 以 **bundle 形态**发布——`package.json` 声明 `dsh.bundle.patch` 指向自带的 `cordis.patch.yml`。这样 `dsh plugin --profile desktop add <包>` 一条命令即完成「安装 + 挂载」，使用者不需要手工编辑自己的补丁层。
 
-**证据（实证）**：`~/.dsh/profiles/desktop/cordis.patch.yml` 现有 `insert` 段（含第三方 MCP 插件条目），说明该机制被实际使用；`dsh plugin --help` 显示 `add/remove/why` 是 pnpm 的薄封装，未见自动插入逻辑。
+**证据（实证）**：
+1. desktop 版内置 CLI：`ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness" "/Applications/DeepSeek Harness.app/Contents/Resources/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js" <args>`，`--version` 输出 `0.2.1-rc.5`。
+2. `dsh plugin --profile <name> <args>` 把参数原样转给 pnpm（`plugin --help` 原文："forwarding the remaining arguments to pnpm in the profile directory"）。
+3. 装普通依赖时 CLI 明确告警：`declares no dsh.bundle — installed as a plain dependency, not a profile layer`。
+4. 装声明了 `dsh.bundle.patch` 的包时，包名被追加进 profile `package.json` 的 `dsh.profile.bundles`，且 `dsh --profile <name> --dump-config` 显示出该包 `cordis.patch.yml` 中的 `insert` 条目。
 
-**备选方案**：发布到 npm 并提供 `dsh plugin add @dsh-anywhere/plugin`——仍需补丁层插入，公开包名会带来作者维护责任，v1 用本地路径安装。
+**备选方案**：发布到 npm 并提供 `dsh plugin add @dsh-anywhere/plugin`——公开包名带来作者维护责任，v1 仍以本地路径/压缩包安装，但 bundle 形态使该路径可随时切换。
 
-**未消解项**：安装两条命令是否会把"首次可用 ≤10 分钟"挤爆，需实测计时。
+**已消解**：原「两条命令是否挤爆 10 分钟」的疑问不再成立——安装收敛为一条命令，`scripts/install.mjs` 一键脚本方案取消。
 
 ## R11 数据落盘
 

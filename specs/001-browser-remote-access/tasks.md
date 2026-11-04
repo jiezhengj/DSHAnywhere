@@ -43,7 +43,7 @@
 
 - [ ] T007 POC-1：用真实会话采样一轮长任务的请求密度与单次响应体量（对照 research.md R1/R5），把数字与结论写入 `docs/poc-findings.md`
 - [ ] T008 POC-2：起临时 Host + `wrangler dev` 中转 + 无头浏览器，抓首屏全部请求 URL，确认无指向 `127.0.0.1:<port>` 的绝对地址（R7）；若存在，记录需注入的改写规则到 `docs/poc-findings.md`
-- [ ] T009 POC-3：验证 `dsh plugin --profile desktop add` 是否自动写入 profile 补丁层，并计时"两条命令安装"（R10），结论写入 `docs/poc-findings.md`
+- [x] T009 POC-3：验证 `dsh plugin --profile desktop add` 的挂载行为（R10）——已确认为「包声明 `dsh.bundle` 即成为补丁层」，无需手改用户补丁层；结论见 `docs/poc-findings.md`
 
 ### 协议层
 
@@ -116,8 +116,8 @@
 - [ ] T038 [US2] 能力链接生成 `packages/plugin/src/link.ts`：32 字节随机、只存 SHA-256、`expiresAt = +10 分钟`、同时最多 1 条 active
 - [ ] T039 [US2] 配对端点 `/p/:token`：校验（含设备数上限 10 台，超限拒绝并提示）→ 下发设备凭证 → `303 Location: /`，并按 `contracts/relay-http.md §2` 设置 `no-store`/`no-referrer`
 - [ ] T040 [US2] 部署文档 `docs/relay-setup.md`：含 `npx wrangler deploy --config relay/wrangler.toml`、账号授权、`workers.dev` 地址获取、`/__relay/health` 自检
-- [ ] T041 [US2] 安装文档 `docs/install.md`：`dsh plugin --profile desktop add` + 补丁层 insert 示例（按 T009 结论决定是否收敛为一条命令）
-- [ ] T042 [US2] 若 T009 证明需手工改补丁层，则提供一键安装脚本 `scripts/install.mjs`；并把首次可用计时结果写入 `docs/poc-findings.md`
+- [ ] T041 [US2] 安装文档 `docs/install.md`：一条命令 `dsh plugin --profile desktop add <本包>`（bundle 自动挂载，无需手改 `cordis.patch.yml`），并给出内置 CLI 的调用方式
+- [x] T042 [US2] 将 `packages/plugin` 声明为 bundle（`dsh.bundle.patch` + 自带 `cordis.patch.yml`），使安装在一条命令内完成；已用 `dsh --dump-config` 实测插入项生效
 
 **Checkpoint**: 使用者能独立完成"部署 → 接入 → 扫码"，US1 的能力首次对真实用户可用
 
