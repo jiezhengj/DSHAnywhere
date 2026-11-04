@@ -5,7 +5,7 @@ export interface StatusView {
   relayUrl: string | null;
   pairingUrl: string | null;
   connection: "未连接" | "重连中" | "已连接";
-  devices: { label: string; lastSeenAt: string }[];
+  devices: { id?: string; label: string; lastSeenAt: string }[];
   successCount: number;
   failureCount: number;
 }
@@ -46,7 +46,11 @@ function unconfiguredSection(): string {
 function configuredSection(view: StatusView): string {
   const devices = view.devices.length
     ? view.devices
-        .map((d) => `<li>${escapeHtml(d.label)} · 最近访问 ${escapeHtml(d.lastSeenAt)}</li>`)
+        .map(
+          (d) =>
+            `<li>${escapeHtml(d.label)} · 最近访问 ${escapeHtml(d.lastSeenAt)}` +
+            ` <button type="button" data-revoke="${escapeHtml(d.id ?? "")}">撤销</button></li>`,
+        )
         .join("")
     : "<li>还没有已配对的设备</li>";
 
@@ -54,16 +58,22 @@ function configuredSection(view: StatusView): string {
     "<section>",
     `<p>中转连接：<strong>${escapeHtml(view.connection)}</strong></p>`,
     `<p>入口地址：<code>${escapeHtml(view.relayUrl ?? "")}</code></p>`,
+    '<div id="pairing-block">',
     view.pairingUrl
-      ? `<p>配对链接：<code class="pairing">${escapeHtml(view.pairingUrl)}</code></p>
-         <canvas id="qr" width="200" height="200"></canvas>
-         <script src="/__anywhere/ui/qr.js"></script>
-         <script src="/__anywhere/ui/ui.js"></script>`
-      : "<p>点下方按钮生成一次性配对链接（10 分钟内有效）。</p>",
-    '<form method="post" action="/__anywhere/api/link"><button type="submit">生成配对链接</button></form>',
+      ? `<p>配对链接：<code class="pairing">${escapeHtml(view.pairingUrl)}</code></p>`
+      : '<p id="pairing-hint">点下方按钮生成一次性配对链接（10 分钟内有效、只能用一次）。</p>',
+    '<canvas id="qr" width="200" height="200"></canvas>',
+    '<button type="button" id="generate-link">生成配对链接</button>',
+    "</div>",
+    '<div class="actions">',
+    '<button type="button" id="rotate">轮换链接</button>',
+    '<button type="button" id="disable">关闭远程接入</button>',
+    "</div>",
     `<p>可访问率：${view.successCount} 成功 / ${view.failureCount} 失败</p>`,
     "<h2>已配对设备</h2>",
-    `<ul>${devices}</ul>`,
+    `<ul id="devices">${devices}</ul>`,
+    '<script src="/__anywhere/ui/qr.js"></script>',
+    '<script src="/__anywhere/ui/ui.js"></script>',
     "</section>",
   ].join("");
 }
@@ -99,5 +109,24 @@ export function renderTooManyDevicesPage(max: number): string {
     status: 403,
     title: "设备数量已达上限",
     hint: `同一台电脑最多配对 ${max} 台设备，请先在电脑端撤销不需要的设备。`,
+  });
+}
+
+/** 清 cookie / 隐私模式下的统一提示：与「链接无效」区分开（T049） */
+export function renderUnauthorizedPage(): string {
+  return renderErrorPage({
+    ...errorSpec("protocol"),
+    status: 401,
+    title: "这台设备还没有配对",
+    hint: "请回到电脑端重新生成配对链接；如果刚清理过浏览器数据，重新扫一次码即可。",
+  });
+}
+
+export function renderDisabledPage(): string {
+  return renderErrorPage({
+    ...errorSpec("protocol"),
+    status: 503,
+    title: "远程接入已关闭",
+    hint: "请在电脑端的「远程接入」页面重新开启。",
   });
 }

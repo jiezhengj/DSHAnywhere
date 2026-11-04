@@ -21,6 +21,8 @@ export interface Device {
   createdAt: string;
   lastSeenAt: string;
   revokedAt?: string;
+  /** 累计成功代理请求数（仅用于状态页展示） */
+  requestCount?: number;
 }
 
 export interface LinkRecord {
@@ -33,6 +35,8 @@ export interface LinkRecord {
 }
 
 export interface AccessStats {
+  /** 统计窗口起点（ISO 时间） */
+  since: string;
   success: number;
   failure: number;
   lastSuccessAt?: string;
@@ -44,6 +48,10 @@ export interface StoreState {
   relay: RelayBinding | null;
   devices: Device[];
   link: LinkRecord | null;
+  /** 每次轮换递增；用于让旧链接立即失效 */
+  linkEpoch: number;
+  /** 用户级开关：关闭后断开隧道并拒绝访问 */
+  enabled: boolean;
   stats: AccessStats;
 }
 
@@ -54,7 +62,9 @@ export function emptyState(): StoreState {
     relay: null,
     devices: [],
     link: null,
-    stats: { success: 0, failure: 0 },
+    linkEpoch: 0,
+    enabled: true,
+    stats: { since: new Date(0).toISOString(), success: 0, failure: 0 },
   };
 }
 

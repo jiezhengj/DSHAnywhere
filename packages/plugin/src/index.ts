@@ -1,18 +1,22 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Adapter, ContractViolation } from "./adapter.ts";
 import { AgentTunnel } from "./agent.ts";
 import type { SocketLike, TunnelStatus } from "./agent.ts";
+import { authenticate, readCookie } from "./auth.ts";
 import { parseConfig, isConfigured } from "./config.ts";
 import type { PluginConfig } from "./config.ts";
 import { Gateway } from "./gateway.ts";
-import { createLink, nextLinkRecord } from "./link.ts";
-import { handlePairing, PAIRING_RE } from "./pairing.ts";
-import { pairingUrl, normalizeRelayUrl } from "./relay-url.ts";
+import { handlePairing } from "./pairing.ts";
 import { renderStatusPage } from "./pages.ts";
-import { Store } from "./store.ts";
+import { handleStatusApi } from "./status.ts";
+import type { StatusContext } from "./status.ts";
+import { Store, emptyState } from "./store.ts";
 import type { StoreState } from "./store.ts";
-import { renderErrorPage, RELAY_UNREACHABLE } from "./errors.ts";
+import { BROWSER_COOKIE } from "./rewrite.ts";
 
 export const PLUGIN_NAME = "dsh-anywhere";
+export const CONTRACT_VERSION = { expected: "0.2.x", actual: "0.2.1-rc.5" };
 
 export interface PluginLogger {
   info?(message: string): void;
@@ -23,15 +27,19 @@ export interface PluginLogger {
 export interface PluginHost {
   webServer?: unknown;
   connection?: unknown;
+  muxPath?: string;
   logger?: PluginLogger;
 }
 
 export interface RuntimeOptions {
   storageDir: string;
+  /** 管理页静态资源目录；默认与插件源码同级的 ui/ */
+  uiDir?: string;
   createSocket: (url: string) => SocketLike;
   dshVersion?: string;
   agentVersion?: string;
   now?: () => number;
+  installId?: string;
 }
 
 interface HostRequestLike {
@@ -44,12 +52,13 @@ interface HostRequestLike {
 interface HostResponseLike {
   statusCode?: number;
   setHeader?(name: string, value: string): void;
-  end?(body?: string): void;
+  end?(body?: string | Uint8Array): void;
 }
 
 export interface PluginRuntime {
   config: PluginConfig;
   store: Store;
+  state(): StoreState;
   status(): { connection: TunnelStatus; relayOrigin: string | null };
   stop(): void;
 }
@@ -82,12 +91,23 @@ async function readBody(req: HostRequestLike): Promise<string> {
   });
 }
 
-function send(res: HostResponseLike | undefined, status: number, headers: Record<string, string>, body: string): void {
+function send(
+  res: HostResponseLike | undefined,
+  status: number,
+  headers: Record<string, string>,
+  body: string | Uint8Array,
+): void {
   if (!res || typeof res.setHeader !== "function" || typeof res.end !== "function") return;
   res.statusCode = status;
   for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
   res.end(body);
 }
+
+const CONTENT_TYPES: Record<string, string> = {
+  ".js": "text/javascript; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+};
 
 /**
  * 装配运行时：状态存储、适配层、隧道、网关与全部本机路由。
@@ -97,137 +117,179 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
   const config = parseConfig(rawConfig);
   const store = new Store(options.storageDir);
   const now = options.now ?? Date.now;
+  const uiDir = options.uiDir ?? join(import.meta.dirname, "..", "ui");
+
+  let current: StoreState = emptyState();
+  const ready = store.load().then((loaded) => {
+    current = loaded;
+    return loaded;
+  });
 
   let adapter: Adapter | null = null;
   try {
     adapter = new Adapter(host as never);
   } catch (err) {
-    if (err instanceof ContractViolation) {
-      host.logger?.error?.(`DSHAnywhere 已禁用：${err.message}`);
-    } else {
-      throw err;
-    }
+    if (err instanceof ContractViolation) host.logger?.error?.(`DSHAnywhere 已禁用：${err.message}`);
+    else throw err;
   }
+
+  let connection: TunnelStatus = "idle";
+  let relayOrigin: string | null = null;
+  let tunnel: AgentTunnel | null = null;
 
   const runtime: PluginRuntime = {
     config,
     store,
-    status: () => ({ connection: "idle", relayOrigin: null }),
-    stop: () => tunnel?.stop(),
+    state: () => current,
+    status: () => ({ connection, relayOrigin }),
+    stop: () => {
+      tunnel?.stop();
+      tunnel = null;
+    },
   };
 
   if (!adapter) return runtime;
   const activeAdapter = adapter;
 
-  let connection: TunnelStatus = "idle";
-  let relayOrigin: string | null = null;
+  const persist = async (next: StoreState): Promise<void> => {
+    current = next;
+    await store.save(next);
+  };
 
-  const tunnel: AgentTunnel | null = config.relayUrl
-    ? new AgentTunnel(
-        {
-          url: `${config.relayUrl.replace(/^http/, "ws")}/__dsh_agent`,
-          installId: "default",
-          agentVersion: options.agentVersion ?? "0.0.0",
-          dshVersion: options.dshVersion ?? "unknown",
-          capabilities: ["MUX"],
-          onStatus: (status) => {
-            connection = status;
-          },
-          onHelloAck: (ack) => {
-            relayOrigin = ack.relayOrigin;
-          },
-          onFrame: (frame) => {
-            void gateway?.onFrame(frame);
-          },
+  const startTunnel = (): void => {
+    tunnel?.stop();
+    tunnel = null;
+    const target = config.relayUrl ?? current.relay?.url ?? null;
+    if (!target || !current.enabled) return;
+    tunnel = new AgentTunnel(
+      {
+        url: `${target.replace(/^http/, "ws").replace(/\/$/, "")}/__dsh_agent`,
+        installId: current.installation?.installId ?? options.installId ?? "default",
+        agentVersion: options.agentVersion ?? "0.0.0",
+        dshVersion: options.dshVersion ?? CONTRACT_VERSION.actual,
+        capabilities: ["MUX"],
+        onStatus: (status) => {
+          connection = status;
         },
-        { createSocket: options.createSocket },
-      )
-    : null;
+        onHelloAck: (ack) => {
+          relayOrigin = ack.relayOrigin;
+        },
+        onFrame: (frame) => {
+          void gateway?.onFrame(frame);
+        },
+      },
+      { createSocket: options.createSocket },
+    );
+    tunnel.start();
+  };
 
   const gateway = new Gateway({
     loopbackOrigin: activeAdapter.getLoopbackOrigin(),
     mintHostCookie: (force) => activeAdapter.mintHostCookie(force),
     send: (bytes) => tunnel?.send(bytes),
+    authorize: (headers) => {
+      if (!current.enabled) return "disabled";
+      const credential = readCookie(headers, BROWSER_COOKIE);
+      const result = authenticate(current, credential);
+      if (!result.ok) return result.reason;
+      return "ok";
+    },
   });
 
-  runtime.status = () => ({ connection, relayOrigin });
+  const statusContext = (): StatusContext => ({
+    state: current,
+    relayUrl: config.relayUrl,
+    connection,
+    relayOrigin,
+    installId: current.installation?.installId ?? options.installId ?? "default",
+    contractVersion: CONTRACT_VERSION,
+    now,
+    secure: true,
+  });
 
-  const state = async (): Promise<StoreState> => await store.load();
+  const applyApiResult = async (result: ReturnType<typeof handleStatusApi>): Promise<void> => {
+    if (result.nextState) await persist(result.nextState);
+    if (result.effect === "rebuild-tunnel" || result.effect === "start-tunnel") startTunnel();
+    if (result.effect === "stop-tunnel") {
+      tunnel?.stop();
+      tunnel = null;
+    }
+  };
 
   activeAdapter.registerRoute("prefix", "/__anywhere/", async (req, res) => {
+    await ready;
     const path = requestPath(req as HostRequestLike);
-    const current = await state();
-    const headers = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" };
+    const method = ((req as HostRequestLike).method ?? "GET").toUpperCase();
 
-    if (path === "/__anywhere/api/status") {
-      const body = JSON.stringify({
-        configured: isConfigured(config),
-        relayUrl: config.relayUrl,
-        connection,
-        relayOrigin,
-        devices: current.devices.filter((d) => !d.revokedAt).length,
-        stats: current.stats,
-      });
-      send(res as HostResponseLike, 200, { ...headers, "content-type": "application/json" }, body);
-      return;
-    }
-
-    if (path === "/__anywhere/api/relay") {
-      const body = await readBody(req as HostRequestLike);
-      const form = new URLSearchParams(body);
-      const normalised = normalizeRelayUrl(form.get("relayUrl"));
-      if (!normalised.ok) {
-        send(res as HostResponseLike, 400, headers, renderErrorPage({ ...RELAY_UNREACHABLE, status: 400, title: "地址无效", hint: normalised.detail }));
+    if (path.startsWith("/__anywhere/ui/")) {
+      const name = path.slice("/__anywhere/ui/".length);
+      if (!/^[a-z0-9._-]+$/i.test(name)) {
+        send(res as HostResponseLike, 404, {}, "");
         return;
       }
-      config.relayUrl = normalised.origin;
-      await store.save({ ...current, relay: { url: normalised.origin, connectedAt: new Date(now()).toISOString() } });
-      send(res as HostResponseLike, 303, { ...headers, location: "/__anywhere/" }, "");
+      try {
+        const content = await readFile(join(uiDir, name));
+        const ext = name.slice(name.lastIndexOf("."));
+        send(
+          res as HostResponseLike,
+          200,
+          { "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream", "cache-control": "no-store" },
+          content,
+        );
+      } catch {
+        send(res as HostResponseLike, 404, {}, "");
+      }
       return;
     }
 
-    if (path === "/__anywhere/api/link") {
-      const created = createLink(now());
-      const next = { ...current, link: nextLinkRecord(current.link, created.record) };
-      await store.save(next);
-      const target = config.relayUrl ? pairingUrl(config.relayUrl, created.link.token) : null;
-      send(res as HostResponseLike, 200, { ...headers, "content-type": "application/json" }, JSON.stringify({ pairingUrl: target, expiresAt: created.record.expiresAt }));
+    if (path.startsWith("/__anywhere/api/")) {
+      const body = method === "POST" ? await readBody(req as HostRequestLike) : "";
+      const result = handleStatusApi(method, path, body, statusContext());
+      await applyApiResult(result);
+      send(res as HostResponseLike, result.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }, result.body);
       return;
     }
 
     const view = {
-      configured: isConfigured(config),
-      relayUrl: config.relayUrl,
+      configured: isConfigured(config) || current.relay !== null,
+      relayUrl: config.relayUrl ?? current.relay?.url ?? null,
       pairingUrl: null as string | null,
       connection:
         connection === "connected" ? ("已连接" as const) : connection === "reconnecting" ? ("重连中" as const) : ("未连接" as const),
-      devices: current.devices.filter((d) => !d.revokedAt).map((d) => ({ label: d.label, lastSeenAt: d.lastSeenAt })),
+      devices: current.devices.filter((d) => !d.revokedAt).map((d) => ({ id: d.id, label: d.label, lastSeenAt: d.lastSeenAt })),
       successCount: current.stats.success,
       failureCount: current.stats.failure,
     };
-    send(res as HostResponseLike, 200, headers, renderStatusPage(view));
+    send(
+      res as HostResponseLike,
+      200,
+      { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" },
+      renderStatusPage(view),
+    );
   });
 
   activeAdapter.registerRoute("prefix", "/p/", async (req, res) => {
-    const path = requestPath(req as HostRequestLike);
-    const current = await state();
-    const outcome = handlePairing(path, current, { now: now() });
-    if (outcome.nextState) await store.save(outcome.nextState);
+    await ready;
+    const outcome = handlePairing(requestPath(req as HostRequestLike), current, { now: now() });
+    if (outcome.nextState) await persist(outcome.nextState);
     send(res as HostResponseLike, outcome.status, outcome.headers, outcome.body);
   });
 
-  // 未匹配到配对路径的 /p/ 请求交回宿主
-  void PAIRING_RE;
-
-  tunnel?.start();
+  void ready.then(() => startTunnel());
   return runtime;
 }
 
-export default function apply(host: PluginHost, rawConfig: unknown, options?: Partial<RuntimeOptions>): PluginRuntime {
+export default function apply(
+  host: PluginHost,
+  rawConfig: unknown,
+  options?: Partial<RuntimeOptions>,
+): PluginRuntime {
   return createRuntime(host, rawConfig, {
     storageDir: options?.storageDir ?? "~/.dsh/storages/dsh-anywhere",
+    ...(options?.uiDir ? { uiDir: options.uiDir } : {}),
     createSocket: options?.createSocket ?? ((url: string) => new WebSocket(url) as unknown as SocketLike),
     ...(options?.dshVersion ? { dshVersion: options.dshVersion } : {}),
     ...(options?.agentVersion ? { agentVersion: options.agentVersion } : {}),
+    ...(options?.installId ? { installId: options.installId } : {}),
   });
 }

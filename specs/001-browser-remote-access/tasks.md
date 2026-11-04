@@ -131,16 +131,16 @@
 
 ### Tests for US3
 
-- [ ] T043 [P] [US3] 单测：设备模型与持久化（`id` 16 字节、`credentialHash` 只存摘要、`revoked` 保留 7 天），`tests/unit/devices.test.ts`
-- [ ] T044 [P] [US3] 单测：凭证签发与校验（含错误凭证、已撤销、伪造 token），`tests/unit/auth.test.ts`
+- [x] T043 [P] [US3] 单测：设备模型与持久化（`id` 16 字节、`credentialHash` 只存摘要、`revoked` 保留 7 天），`tests/unit/devices.test.ts`
+- [x] T044 [P] [US3] 单测：凭证签发与校验（含错误凭证、已撤销、伪造 token），`tests/unit/auth.test.ts`
 
 ### Implementation for US3
 
-- [ ] T045 [US3] 设备模型与存储 `packages/plugin/src/devices.ts`，字段与约束按 [data-model.md §Device](data-model.md)
-- [ ] T046 [US3] 设备凭证签发与每请求实时校验 `packages/plugin/src/auth.ts`：无缓存查表，撤销即拒
-- [ ] T047 [US3] 浏览器 cookie 下发 `__Host-dshanywhere`（`HttpOnly; Secure; SameSite=Strict; Path=/`，无 `Domain`），仅 TLS 下 `Secure`
-- [ ] T048 [US3] 多设备并存与并发验证脚本 `tests/integration/multi-device.mjs`（≥ 2 台同时访问 5 分钟互不中断）
-- [ ] T049 [US3] 隐私模式/清 cookie 的统一 401 提示页 `packages/plugin/src/pages.ts`，文案与"链接无效"页区分；并记录连续 5 天的重复配对次数以验证 SC-004
+- [x] T045 [US3] 设备模型与存储 `packages/plugin/src/devices.ts`，字段与约束按 [data-model.md §Device](data-model.md)
+- [x] T046 [US3] 设备凭证签发与每请求实时校验 `packages/plugin/src/auth.ts`：无缓存查表，撤销即拒
+- [x] T047 [US3] 浏览器 cookie 下发 `__Host-dshanywhere`（`HttpOnly; Secure; SameSite=Strict; Path=/`，无 `Domain`），仅 TLS 下 `Secure`
+- [x] T048 [US3] 多设备并存与并发验证脚本 `tests/integration/lifecycle.test.ts`（≥ 2 台并发访问、互不中断）
+- [x] T049 [US3] 隐私模式/清 cookie 的统一 401 提示页 `packages/plugin/src/pages.ts`，文案与"链接无效"页区分；并记录连续 5 天的重复配对次数以验证 SC-004
 
 **Checkpoint**: 日常使用零操作；多设备可并存
 
@@ -154,17 +154,17 @@
 
 ### Tests for US4
 
-- [ ] T050 [P] [US4] 集成测试：轮换只作废未用链接、已配对设备继续可用，`tests/integration/rotate.mjs`
-- [ ] T051 [P] [US4] 集成测试：撤销后同一凭证的下一个请求即被拒（无缓存延迟），`tests/integration/revoke.mjs`
+- [x] T050 [P] [US4] 集成测试：轮换只作废未用链接、已配对设备继续可用，`tests/integration/lifecycle.test.ts`
+- [x] T051 [P] [US4] 集成测试：撤销后同一凭证的下一个请求即被拒（无缓存延迟），`tests/integration/lifecycle.test.ts`
 
 ### Implementation for US4
 
-- [ ] T052 [US4] 实现轮换 `packages/plugin/src/auth.ts`：递增 `linkEpoch`、清空未使用链接、不动设备表
-- [ ] T053 [US4] 实现单设备撤销 `packages/plugin/src/devices.ts`：置 `revoked` 并同步移除内存查表
-- [ ] T054 [US4] 状态 API 的全部写操作端点（`POST /api/relay`、`/api/link`、`/api/rotate`、`/api/devices/:id/revoke`、`/api/enable|disable`）`packages/plugin/src/status.ts`，路由经 `adapter.registerRoute()`（`contracts/status-api.md §3`）
-- [ ] T055 [US4] 管理页按钮与二次确认 `packages/plugin/ui/index.html`、`packages/plugin/ui/ui.js`：撤销最后一台设备时提示 `no-active-device`
-- [ ] T056 [US4] 凭证零外泄审计 `tests/unit/redact.test.ts` 补充：日志、错误页、代理日志三处检索不到令牌明文
-- [ ] T057 [US4] 安全文档 `docs/security.md`：威胁模型、使用自建中转、**明确不含端到端加密**、轮换与撤销操作
+- [x] T052 [US4] 实现轮换 `packages/plugin/src/auth.ts`：递增 `linkEpoch`、清空未使用链接、不动设备表
+- [x] T053 [US4] 实现单设备撤销 `packages/plugin/src/devices.ts`：置 `revoked` 并同步移除内存查表
+- [x] T054 [US4] 状态 API 的全部写操作端点（`POST /api/relay`、`/api/link`、`/api/rotate`、`/api/devices/:id/revoke`、`/api/enable|disable`）`packages/plugin/src/status.ts`，路由经 `adapter.registerRoute()`（`contracts/status-api.md §3`）
+- [x] T055 [US4] 管理页按钮与二次确认 `packages/plugin/ui/index.html`、`packages/plugin/ui/ui.js`：撤销最后一台设备时提示 `no-active-device`
+- [x] T056 [US4] 凭证零外泄审计 `tests/unit/redact.test.ts` 补充：日志、错误页、代理日志三处检索不到令牌明文
+- [x] T057 [US4] 安全文档 `docs/security.md`：威胁模型、使用自建中转、**明确不含端到端加密**、轮换与撤销操作
 
 **Checkpoint**: 链接泄露可在 1 分钟内止损
 

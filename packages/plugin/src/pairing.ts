@@ -2,7 +2,7 @@ import { MAX_DEVICES, canPairAnotherDevice, createDevice, deviceLabel } from "./
 import { consumeLink } from "./link.ts";
 import { renderLinkInvalidPage, renderTooManyDevicesPage } from "./pages.ts";
 import type { StoreState } from "./store.ts";
-import { BROWSER_COOKIE } from "./rewrite.ts";
+import { deviceCookie } from "./auth.ts";
 
 export const PAIRING_RE = /^\/p\/([A-Za-z0-9_-]{20,})$/;
 
@@ -66,13 +66,7 @@ export function handlePairing(
   }
 
   const { device, credential } = createDevice(deviceLabel(state.devices.length), now);
-  const cookie = [
-    `${BROWSER_COOKIE}=${credential}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Strict",
-    ...(secure ? ["Secure"] : []),
-  ].join("; ");
+  const cookie = deviceCookie(credential, { secure, maxAgeDays: 30 });
 
   return {
     status: 303,

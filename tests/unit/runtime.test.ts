@@ -99,45 +99,50 @@ test("未配置时首页给出部署命令", async () => {
   assert.match(out.body, /npx wrangler deploy/);
 });
 
-test("保存中转地址后返回 303 并落盘", async () => {
+test("保存中转地址返回 ok 并落盘", async () => {
   const { runtime, call } = await runtimeWith();
-  const out = await call("POST", "/__anywhere/api/relay", "relayUrl=https%3A%2F%2Frelay.example");
-  assert.equal(out.status, 303);
-  const state = await runtime.store.load();
-  assert.equal(state.relay?.url, "https://relay.example");
+  const out = await call("POST", "/__anywhere/api/relay", JSON.stringify({ url: "https://relay.example" }));
+  assert.equal(out.status, 200);
+  assert.equal(JSON.parse(out.body).ok, true);
+  assert.equal(runtime.state().relay?.url, "https://relay.example");
+  const persisted = await runtime.store.load();
+  assert.equal(persisted.relay?.url, "https://relay.example");
 });
 
-test("非法中转地址返回 400", async () => {
+test("非法中转地址返回 invalid-url", async () => {
   const { call } = await runtimeWith();
-  const out = await call("POST", "/__anywhere/api/relay", "relayUrl=http%3A%2F%2Frelay.example");
+  const out = await call("POST", "/__anywhere/api/relay", JSON.stringify({ url: "http://relay.example" }));
   assert.equal(out.status, 400);
+  assert.equal(JSON.parse(out.body).error.code, "invalid-url");
 });
 
-test("生成配对链接返回 JSON 形式的地址", async () => {
+test("生成配对链接返回 pairUrl", async () => {
   const { call } = await runtimeWith({ relayUrl: "https://relay.example" });
   const out = await call("POST", "/__anywhere/api/link");
   assert.equal(out.status, 200);
   const payload = JSON.parse(out.body);
-  assert.match(payload.pairingUrl, /^https:\/\/relay\.example\/p\/[A-Za-z0-9_-]+$/);
-  assert.ok(payload.expiresAt > 1_000_000);
+  assert.match(payload.pairUrl, /^https:\/\/relay\.example\/p\/[A-Za-z0-9_-]+$/);
+  assert.ok(Date.parse(payload.expiresAt) > 1_000_000);
 });
 
-test("状态接口返回配置与统计", async () => {
+test("状态接口返回契约形态", async () => {
   const { call } = await runtimeWith();
   const out = await call("GET", "/__anywhere/api/status");
   assert.equal(out.status, 200);
-  assert.equal(JSON.parse(out.body).configured, false);
+  const payload = JSON.parse(out.body);
+  assert.equal(payload.installation.state, "unconfigured");
+  assert.equal(payload.relay.url, null);
+  assert.deepEqual(payload.devices, []);
 });
 
 test("配对链接可完成配对并只成功一次", async () => {
   const { runtime, call } = await runtimeWith({ relayUrl: "https://relay.example" });
   const link = await call("POST", "/__anywhere/api/link");
-  const token = JSON.parse(link.body).pairingUrl.split("/p/")[1];
+  const token = JSON.parse(link.body).pairUrl.split("/p/")[1];
   const first = await call("GET", `/p/${token}`);
   assert.equal(first.status, 303);
   assert.match(first.headers["set-cookie"] ?? "", /__Host-dshanywhere=/);
   const second = await call("GET", `/p/${token}`);
   assert.equal(second.status, 401);
-  const state = await runtime.store.load();
-  assert.equal(state.devices.length, 1);
+  assert.equal(runtime.state().devices.length, 1);
 });

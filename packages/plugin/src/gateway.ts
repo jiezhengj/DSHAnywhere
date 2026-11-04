@@ -15,6 +15,7 @@ import type {
 } from "../../protocol/src/index.ts";
 import { FlowWindow, splitPayload } from "./flow.ts";
 import { filterResponseHeaders, rewriteRequestHeaders, toAbsoluteUrl } from "./rewrite.ts";
+import { renderDisabledPage, renderUnauthorizedPage } from "./pages.ts";
 
 export interface WsClientLike {
   send(data: Uint8Array): void;
@@ -30,6 +31,8 @@ export interface GatewayDeps {
   fetchImpl?: typeof fetch;
   openSocket?: (url: string, headers: Record<string, string>) => WsClientLike;
   maxFrameBytes?: number;
+  /** 每个请求实时鉴权：非 ok 时回对应提示页，不触碰 loopback */
+  authorize?: (headers: Record<string, string>) => "ok" | "unpaired" | "disabled";
 }
 
 interface PendingRequest {
@@ -122,7 +125,28 @@ export class Gateway {
     this.#pending.delete(streamId);
 
     const body = pending.chunks.length ? concat(pending.chunks, pending.bytes) : null;
+    if (pending.head.path.startsWith("/__anywhere/")) {
+      const denied: HttpResponseHead = { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } };
+      this.#sendFrame(FrameType.HTTP_RESPONSE_HEAD, streamId, encodeJson(denied));
+      this.#sendFrame(FrameType.HTTP_RESPONSE_END, streamId, new Uint8Array());
+      return;
+    }
+
     const url = toAbsoluteUrl(pending.head.path, this.#deps.loopbackOrigin);
+
+    const gate = this.#deps.authorize?.(pending.head.headers ?? {}) ?? "ok";
+    if (gate !== "ok") {
+      const head: HttpResponseHead = {
+        status: 401,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" },
+      };
+      if (gate === "disabled") head.status = 503;
+      this.#sendFrame(FrameType.HTTP_RESPONSE_HEAD, streamId, encodeJson(head));
+      const page = gate === "disabled" ? renderDisabledPage() : renderUnauthorizedPage();
+      this.#sendFrame(FrameType.HTTP_RESPONSE_BODY, streamId, new TextEncoder().encode(page));
+      this.#sendFrame(FrameType.HTTP_RESPONSE_END, streamId, new Uint8Array());
+      return;
+    }
 
     try {
       let response = await this.#fetchWithCookie(url, pending, body);
@@ -180,6 +204,11 @@ export class Gateway {
   }
 
   #openSocket(streamId: number, open: WsOpen): void {
+    const wsGate = this.#deps.authorize?.(open.headers ?? {}) ?? "ok";
+    if (wsGate !== "ok") {
+      this.#sendFrame(FrameType.WS_OPEN_ACK, streamId, encodeJson({ ok: false, reason: wsGate }));
+      return;
+    }
     const origin = this.#deps.loopbackOrigin.replace(/^http/, "ws");
     const url = toAbsoluteUrl(open.path, origin);
     const openSocket =
