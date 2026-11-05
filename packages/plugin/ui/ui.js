@@ -14,7 +14,7 @@
     const canvas = document.getElementById("qr");
     if (!canvas || !window.DSHAnywhereQr) return;
     const matrix = window.DSHAnywhereQr.encodeQr(pairUrl);
-    window.DSHAnywhereQr.drawQr(canvas, matrix, 4, 8);
+    window.DSHAnywhereQr.drawQr(canvas, matrix);
   };
 
   const showPairing = (pairUrl) => {

@@ -72,3 +72,29 @@ test("不同掩码产生不同矩阵但都能生成", () => {
 test("超出容量时报错而不是静默截断", () => {
   assert.throws(() => encodeQr("x".repeat(200)), /内容过长/);
 });
+
+// 回读校验：把矩阵栅格化后用 jsQR 解回来，必须与原文一致。
+// 这是之前缺的关键验证——旧实现结构测试全绿，但手机扫不出来。
+import jsQR from "jsqr";
+// @ts-expect-error 浏览器侧零依赖脚本，无类型声明
+import { rasterizeQr } from "../../packages/plugin/ui/qr.js";
+
+const ROUNDTRIP_CASES = [
+  "hi",
+  "https://x.dev",
+  "https://relay.example/p/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "https://dsh-anywhere-relay.example.workers.dev/p/sulWCbR7vEFnaN2NPOtWlO-qlRmpcX7bTxImwPD_0VE",
+  "https://relay.example/p/" + "z".repeat(96),
+];
+
+for (const text of ROUNDTRIP_CASES) {
+  test(`二维码可被解码回原文（${text.length} 字节）`, () => {
+    const matrix = encodeQr(text);
+    for (const scale of [3, 4]) {
+      const { data, width } = rasterizeQr(matrix, scale, 4);
+      const result = jsQR(data, width, width, { inversionAttempts: "attemptBoth" });
+      assert.ok(result, `scale=${scale} 时未能识别`);
+      assert.equal(result.data, text, `scale=${scale} 时内容不一致`);
+    }
+  });
+}

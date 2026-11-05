@@ -1,10 +1,6 @@
-// 零依赖 QR 编码器（byte 模式，纠错等级 L，版本 1–6）。
-// 只被本机管理页使用；远端入口不加载它。产物为布尔矩阵，交给 canvas 绘制。
-
-const TOTAL_CODEWORDS = [26, 44, 70, 100, 134, 172];
-const ECC_CODEWORDS = [7, 10, 15, 20, 26, 18];
-const BLOCKS = [1, 1, 1, 1, 1, 2];
-const ALIGN_CENTER = [0, 18, 22, 26, 30, 34];
+// 零依赖 QR 编码器：byte 模式、纠错等级 L、版本 1–6（最多 134 字节，够放配对链接）。
+// 算法按 ISO/IEC 18004 实现：定位/对齐/时序图形、格式信息 BCH、8 种掩码按罚分择优。
+// 只被本地管理界面使用；测试用 jsQR 把矩阵解码回文本做回读校验。
 
 const GF_EXP = new Uint8Array(512);
 const GF_LOG = new Uint8Array(256);
@@ -49,7 +45,7 @@ export function rsEncode(data, eccCount) {
   return result;
 }
 
-/** 校验码字满足 RS 校验子全零（用于自测） */
+/** 校验码字满足 RS 校验子全零（自测用） */
 export function rsSyndromes(codewords, eccCount) {
   const out = [];
   for (let i = 0; i < eccCount; i += 1) {
@@ -60,53 +56,15 @@ export function rsSyndromes(codewords, eccCount) {
   return out;
 }
 
-function pickVersion(byteLength) {
-  for (let v = 1; v <= 6; v += 1) {
-    const capacityBits = (TOTAL_CODEWORDS[v - 1] - ECC_CODEWORDS[v - 1] * BLOCKS[v - 1]) * 8;
-    if (4 + 8 + byteLength * 8 <= capacityBits) return v;
-  }
-  throw new Error(`内容过长，超出 v6-L 容量（${byteLength} 字节）`);
-}
-
-function buildBitStream(bytes, version) {
-  const dataCodewords = TOTAL_CODEWORDS[version - 1] - ECC_CODEWORDS[version - 1] * BLOCKS[version - 1];
-  const bits = [];
-  const push = (value, length) => {
-    for (let i = length - 1; i >= 0; i -= 1) bits.push((value >> i) & 1);
-  };
-  push(0b0100, 4);
-  push(bytes.length, 8);
-  for (const byte of bytes) push(byte, 8);
-  const capacityBits = dataCodewords * 8;
-  for (let i = 0; i < 4 && bits.length < capacityBits; i += 1) bits.push(0);
-  while (bits.length % 8 !== 0) bits.push(0);
-  const codewords = [];
-  for (let i = 0; i < bits.length; i += 8) {
-    let byte = 0;
-    for (let j = 0; j < 8; j += 1) byte = (byte << 1) | bits[i + j];
-    codewords.push(byte);
-  }
-  const pads = [0xec, 0x11];
-  let padIndex = 0;
-  while (codewords.length < dataCodewords) codewords.push(pads[padIndex++ % 2]);
-  return codewords;
-}
-
-function interleave(codewords, version, eccCount, blockCount) {
-  if (blockCount === 1) return [...codewords, ...rsEncode(codewords, eccCount)];
-  const per = codewords.length / blockCount;
-  const dataBlocks = [];
-  const eccBlocks = [];
-  for (let i = 0; i < blockCount; i += 1) {
-    const block = codewords.slice(i * per, (i + 1) * per);
-    dataBlocks.push(block);
-    eccBlocks.push(rsEncode(block, eccCount));
-  }
-  const out = [];
-  for (let i = 0; i < per; i += 1) for (const block of dataBlocks) out.push(block[i]);
-  for (let i = 0; i < eccCount; i += 1) for (const block of eccBlocks) out.push(block[i]);
-  return out;
-}
+// 版本表（纠错等级 L）：总码字数、每块校验码字数、块数、对齐图形中心
+const SPECS = [
+  { total: 26, ecc: 7, blocks: 1, align: [] },
+  { total: 44, ecc: 10, blocks: 1, align: [6, 18] },
+  { total: 70, ecc: 15, blocks: 1, align: [6, 22] },
+  { total: 100, ecc: 20, blocks: 1, align: [6, 26] },
+  { total: 134, ecc: 26, blocks: 1, align: [6, 30] },
+  { total: 172, ecc: 18, blocks: 2, align: [6, 34] },
+];
 
 const MASKS = [
   (r, c) => (r + c) % 2 === 0,
@@ -116,124 +74,157 @@ const MASKS = [
   (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
   (r, c) => ((r * c) % 2) + ((r * c) % 3) === 0,
   (r, c) => (((r * c) % 2) + ((r * c) % 3)) % 2 === 0,
-  (r, c) => (((r + c) % 2) + ((r * c) % 3)) % 2 === 0,
+  (r, c) => (((r * c) % 3) + ((r + c) % 2)) % 2 === 0,
 ];
+
+function dataCodewordCount(version) {
+  const spec = SPECS[version - 1];
+  return spec.total - spec.ecc * spec.blocks;
+}
+
+function pickVersion(byteLength) {
+  for (let version = 1; version <= SPECS.length; version += 1) {
+    if (4 + 8 + byteLength * 8 <= dataCodewordCount(version) * 8) return version;
+  }
+  throw new Error(`内容过长：byte 模式 + L 级最多支持 ${dataCodewordCount(SPECS.length) - 2} 字节`);
+}
+
+function buildDataCodewords(bytes, version) {
+  const capacity = dataCodewordCount(version);
+  const bits = [];
+  const push = (value, length) => {
+    for (let i = length - 1; i >= 0; i -= 1) bits.push((value >> i) & 1);
+  };
+  push(0b0100, 4); // byte 模式
+  push(bytes.length, 8); // v1–v9 的字符计数是 8 位
+  for (const byte of bytes) push(byte, 8);
+  const capacityBits = capacity * 8;
+  for (let i = 0; i < 4 && bits.length < capacityBits; i += 1) bits.push(0); // 终止符
+  while (bits.length % 8 !== 0) bits.push(0);
+  const codewords = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    let byte = 0;
+    for (let j = 0; j < 8; j += 1) byte = (byte << 1) | bits[i + j];
+    codewords.push(byte);
+  }
+  const pads = [0xec, 0x11];
+  let padIndex = 0;
+  while (codewords.length < capacity) codewords.push(pads[padIndex++ % 2]);
+  return codewords;
+}
+
+function interleave(codewords, version) {
+  const spec = SPECS[version - 1];
+  if (spec.blocks === 1) return [...codewords, ...rsEncode(codewords, spec.ecc)];
+  const per = codewords.length / spec.blocks;
+  const dataBlocks = [];
+  const eccBlocks = [];
+  for (let i = 0; i < spec.blocks; i += 1) {
+    const block = codewords.slice(i * per, (i + 1) * per);
+    dataBlocks.push(block);
+    eccBlocks.push(rsEncode(block, spec.ecc));
+  }
+  const out = [];
+  for (let i = 0; i < per; i += 1) for (const block of dataBlocks) out.push(block[i]);
+  for (let i = 0; i < spec.ecc; i += 1) for (const block of eccBlocks) out.push(block[i]);
+  return out;
+}
 
 function formatBits(mask) {
   const data = (0b01 << 3) | mask; // 纠错等级 L = 0b01
   let value = data << 10;
   for (let i = 14; i >= 10; i -= 1) {
-    if ((value >> i) & 1) value ^= 0b10100110111 << (i - 10);
+    if ((value >> i) & 1) value ^= 0x537 << (i - 10);
   }
-  return ((data << 10) | value) ^ 0b101010000010010;
+  return ((data << 10) | value) ^ 0x5412;
 }
 
-function makeMatrix(version) {
+function makeMatrix(version, mask) {
   const size = 17 + version * 4;
   const m = Array.from({ length: size }, () => new Array(size).fill(null));
-  const set = (r, c, v) => {
-    if (r >= 0 && r < size && c >= 0 && c < size) m[r][c] = v;
-  };
 
-  const finder = (top, left) => {
+  const probe = (row0, col0) => {
     for (let r = -1; r <= 7; r += 1) {
       for (let c = -1; c <= 7; c += 1) {
-        const inside = r >= 0 && r < 7 && c >= 0 && c < 7;
-        const ring = inside && (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4));
-        set(top + r, left + c, inside ? ring : false);
+        const row = row0 + r;
+        const col = col0 + c;
+        if (row < 0 || row >= size || col < 0 || col >= size) continue;
+        const inSquare = r >= 0 && r <= 6 && c >= 0 && c <= 6;
+        const dark =
+          inSquare && (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4));
+        m[row][col] = dark;
       }
     }
   };
-  finder(0, 0);
-  finder(0, size - 7);
-  finder(size - 7, 0);
+  probe(0, 0);
+  probe(size - 7, 0);
+  probe(0, size - 7);
 
-  for (let i = 8; i < size - 8; i += 1) {
-    set(6, i, i % 2 === 0);
-    set(i, 6, i % 2 === 0);
-  }
-
-  if (version > 1) {
-    const center = ALIGN_CENTER[version - 1];
-    const positions = [6, center];
-    for (const r of positions) {
-      for (const c of positions) {
-        if (m[r][c] !== null) continue;
-        for (let dr = -2; dr <= 2; dr += 1) {
-          for (let dc = -2; dc <= 2; dc += 1) {
-            const ring = Math.max(Math.abs(dr), Math.abs(dc));
-            set(r + dr, c + dc, ring !== 1);
-          }
+  for (const row0 of SPECS[version - 1].align) {
+    for (const col0 of SPECS[version - 1].align) {
+      if (row0 === 6 && col0 === 6) continue;
+      if (m[row0][col0] !== null) continue;
+      for (let r = -2; r <= 2; r += 1) {
+        for (let c = -2; c <= 2; c += 1) {
+          m[row0 + r][col0 + c] = r === -2 || r === 2 || c === -2 || c === 2 || (r === 0 && c === 0);
         }
       }
     }
   }
 
-  // 预留格式信息区域
-  for (let i = 0; i < 9; i += 1) {
-    if (m[8][i] === null) m[8][i] = false;
-    if (m[i][8] === null) m[i][8] = false;
+  for (let i = 8; i < size - 8; i += 1) {
+    if (m[i][6] === null) m[i][6] = i % 2 === 0;
+    if (m[6][i] === null) m[6][i] = i % 2 === 0;
   }
-  for (let i = 0; i < 8; i += 1) {
-    if (m[8][size - 1 - i] === null) m[8][size - 1 - i] = false;
-    if (m[size - 1 - i][8] === null) m[size - 1 - i][8] = false;
+
+  const bits = formatBits(mask);
+  const dark = (i) => ((bits >> i) & 1) === 1;
+  for (let i = 0; i < 15; i += 1) {
+    if (i < 6) m[i][8] = dark(i);
+    else if (i < 8) m[i + 1][8] = dark(i);
+    else m[size - 15 + i][8] = dark(i);
+  }
+  for (let i = 0; i < 15; i += 1) {
+    if (i < 8) m[8][size - i - 1] = dark(i);
+    else if (i < 9) m[8][15 - i] = dark(i);
+    else m[8][14 - i] = dark(i);
   }
   m[size - 8][8] = true; // 固定暗模块
 
   return m;
 }
 
-function placeData(m, codewords) {
+function placeData(m, codewords, mask) {
   const size = m.length;
-  const bits = [];
-  for (const byte of codewords) for (let i = 7; i >= 0; i -= 1) bits.push((byte >> i) & 1);
-  let index = 0;
-  for (let right = size - 1; right >= 1; right -= 2) {
-    if (right === 6) right = 5;
-    for (let vert = 0; vert < size; vert += 1) {
-      for (let j = 0; j < 2; j += 1) {
-        const col = right - j;
-        const upward = ((right + 1) / 2) % 2 === 1;
-        const row = upward ? size - 1 - vert : vert;
-        if (m[row][col] !== null) continue;
-        m[row][col] = index < bits.length ? bits[index] === 1 : false;
-        index += 1;
+  const applyMask = MASKS[mask];
+  let inc = -1;
+  let row = size - 1;
+  let bitIndex = 7;
+  let byteIndex = 0;
+  for (let col = size - 1; col > 0; col -= 2) {
+    if (col === 6) col -= 1;
+    for (;;) {
+      for (let c = 0; c < 2; c += 1) {
+        const target = col - c;
+        if (m[row][target] !== null) continue;
+        let value = false;
+        if (byteIndex < codewords.length) value = ((codewords[byteIndex] >>> bitIndex) & 1) === 1;
+        if (applyMask(row, target)) value = !value;
+        m[row][target] = value;
+        bitIndex -= 1;
+        if (bitIndex === -1) {
+          byteIndex += 1;
+          bitIndex = 7;
+        }
+      }
+      row += inc;
+      if (row < 0 || row >= size) {
+        row -= inc;
+        inc = -inc;
+        break;
       }
     }
   }
-}
-
-function applyFormat(m, mask) {
-  const size = m.length;
-  const bits = formatBits(mask);
-  const bit = (i) => ((bits >> (14 - i)) & 1) === 1;
-  for (let i = 0; i < 6; i += 1) m[8][i] = bit(i);
-  m[8][7] = bit(6);
-  m[8][8] = bit(7);
-  m[7][8] = bit(8);
-  for (let i = 9; i < 15; i += 1) m[14 - i][8] = bit(i);
-  for (let i = 0; i < 8; i += 1) m[size - 1 - i][8] = bit(i);
-  for (let i = 8; i < 15; i += 1) m[8][size - 15 + i] = bit(i);
-}
-
-function applyMask(m, mask) {
-  const size = m.length;
-  const fn = MASKS[mask];
-  for (let r = 0; r < size; r += 1) {
-    for (let c = 0; c < size; c += 1) {
-      if (isFunctionModule(m, r, c)) continue;
-      if (fn(r, c)) m[r][c] = !m[r][c];
-    }
-  }
-}
-
-function isFunctionModule(m, r, c) {
-  const size = m.length;
-  const inFinder = (r < 9 && c < 9) || (r < 9 && c >= size - 8) || (r >= size - 8 && c < 9);
-  if (inFinder) return true;
-  if (r === 6 || c === 6) return true;
-  if (m[r][c] === null) return false;
-  return false;
 }
 
 function penalty(m) {
@@ -271,9 +262,9 @@ function penalty(m) {
     for (let r = 0; r + 7 <= size; r += 1) if (matches(column, r)) score += 40;
   }
 
-  let dark = 0;
-  for (const row of m) for (const cell of row) if (cell) dark += 1;
-  const ratio = (dark * 100) / (size * size);
+  let darkCount = 0;
+  for (const row of m) for (const cell of row) if (cell) darkCount += 1;
+  const ratio = (darkCount * 100) / (size * size);
   score += Math.floor(Math.abs(ratio - 50) / 5) * 10;
   return score;
 }
@@ -287,17 +278,14 @@ export function encodeQr(text) {
 export function encodeQrWithMask(text, forcedMask) {
   const bytes = new TextEncoder().encode(text);
   const version = pickVersion(bytes.length);
-  const dataCodewords = buildBitStream(bytes, version);
-  const codewords = interleave(dataCodewords, version, ECC_CODEWORDS[version - 1], BLOCKS[version - 1]);
+  const codewords = interleave(buildDataCodewords(bytes, version), version);
 
   let best = null;
   let bestScore = Infinity;
   for (let mask = 0; mask < 8; mask += 1) {
     if (forcedMask !== null && mask !== forcedMask) continue;
-    const m = makeMatrix(version);
-    placeData(m, codewords);
-    applyMask(m, mask);
-    applyFormat(m, mask);
+    const m = makeMatrix(version, mask);
+    placeData(m, codewords, mask);
     const score = penalty(m);
     if (score < bestScore) {
       bestScore = score;
@@ -307,23 +295,59 @@ export function encodeQrWithMask(text, forcedMask) {
   return best;
 }
 
-/** 在 canvas 上绘制；调用方负责传入已挂载的 canvas 元素 */
-export function drawQr(canvas, matrix, scale = 4, margin = 8) {
+/** 把矩阵栅格化成 RGBA 像素（无 canvas 环境自测、或需要直接取像素时用） */
+export function rasterizeQr(matrix, scale = 4, margin = 4) {
   const size = matrix.length;
-  const total = (size + margin * 2) * scale;
-  canvas.width = total;
-  canvas.height = total;
+  const width = (size + margin * 2) * scale;
+  const data = new Uint8ClampedArray(width * width * 4);
+  for (let y = 0; y < width; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const row = Math.floor(y / scale) - margin;
+      const col = Math.floor(x / scale) - margin;
+      const dark = row >= 0 && row < size && col >= 0 && col < size && matrix[row][col];
+      const i = (y * width + x) * 4;
+      const value = dark ? 0 : 255;
+      data[i] = value;
+      data[i + 1] = value;
+      data[i + 2] = value;
+      data[i + 3] = 255;
+    }
+  }
+  return { data, width };
+}
+
+/**
+ * 在 canvas 上绘制。尺寸按整数模块像素计算（默认目标约 196px），
+ * 再按设备像素比放大画布，避免浏览器缩放把模块边缘糊掉。
+ */
+export function drawQr(canvas, matrix, options) {
+  const margin = options && typeof options.margin === "number" ? options.margin : 4;
+  const target = options && typeof options.target === "number" ? options.target : 196;
+  const size = matrix.length;
+  const total = size + margin * 2;
+  const scale = Math.max(2, Math.floor(target / total));
+  const cssSize = total * scale;
+  const dpr = typeof window !== "undefined" && window.devicePixelRatio ? Math.min(window.devicePixelRatio, 3) : 1;
+
+  canvas.width = Math.round(cssSize * dpr);
+  canvas.height = Math.round(cssSize * dpr);
+  canvas.style.width = `${cssSize}px`;
+  canvas.style.height = `${cssSize}px`;
+  canvas.style.imageRendering = "pixelated";
+
   const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, total, total);
+  ctx.fillRect(0, 0, cssSize, cssSize);
   ctx.fillStyle = "#000";
   for (let r = 0; r < size; r += 1) {
     for (let c = 0; c < size; c += 1) {
       if (matrix[r][c]) ctx.fillRect((c + margin) * scale, (r + margin) * scale, scale, scale);
     }
   }
+  return { size: cssSize, scale };
 }
 
 if (typeof window !== "undefined") {
-  window.DSHAnywhereQr = { encodeQr, drawQr };
+  window.DSHAnywhereQr = { encodeQr, drawQr, rasterizeQr };
 }

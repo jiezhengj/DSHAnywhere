@@ -120,7 +120,7 @@ window.__ModuleLoader__.load({
         marginTop: 2,
         borderTop: `1px solid ${C.border}`,
       },
-      qr: { width: 148, height: 148, borderRadius: 8, background: "#fff", border: `1px solid ${C.border}` },
+      qr: { flex: "0 0 auto", borderRadius: 8, background: "#fff", border: `1px solid ${C.border}` },
     };
 
     const call = async (path, body) => {
@@ -185,7 +185,7 @@ window.__ModuleLoader__.load({
         import("/__anywhere/ui/qr.js")
           .then((mod) => {
             if (cancelled || !canvasRef.current) return;
-            mod.drawQr(canvasRef.current, mod.encodeQr(pairUrl), 4, 8);
+            mod.drawQr(canvasRef.current, mod.encodeQr(pairUrl));
           })
           .catch((err) => setNotice(`二维码绘制失败：${String(err)}`));
         return () => {
