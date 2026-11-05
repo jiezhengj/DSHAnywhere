@@ -75,7 +75,8 @@ function configuredSection(view: StatusView): string {
     `<p>可访问率：${availabilityText(view.successCount, view.failureCount)}（${view.successCount} 成功 / ${view.failureCount} 失败，24 小时窗口）</p>`,
     "<h2>已配对设备</h2>",
     `<ul id="devices">${devices}</ul>`,
-    '<script src="/__anywhere/ui/qr.js"></script>',
+    // qr.js 是 ES 模块（有 export）；必须用 type="module"，否则整段脚本语法错误、二维码永远不渲染
+    '<script type="module" src="/__anywhere/ui/qr.js"></script>',
     '<script src="/__anywhere/ui/ui.js"></script>',
     "</section>",
   ].join("");

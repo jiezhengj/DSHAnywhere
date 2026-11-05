@@ -59,3 +59,8 @@ test("桌面端区分中转不可达与额度限制（FR-013）", () => {
 test("正常状态下不渲染故障横幅", () => {
   assert.doesNotMatch(renderStatusPage(base), /中转不可达/);
 });
+
+test("qr.js 以 module 方式加载，否则二维码永远不渲染", () => {
+  const html = renderStatusPage(base);
+  assert.match(html, /<script type="module" src="\/__anywhere\/ui\/qr\.js"><\/script>/);
+});

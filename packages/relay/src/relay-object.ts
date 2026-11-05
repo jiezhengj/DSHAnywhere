@@ -105,8 +105,18 @@ export class RelayObject {
     if (!isUpgradeRequest(request)) {
       return errorResponse("protocol");
     }
+    // 同一个安装重复连接时"后到者接管"：旧连接可能已经半死（客户端进程被杀、
+    // 网络中断但 DO 还没收到 close），此时返回 409 会让这台电脑永久连不上。
     if (this.#agent) {
-      return errorResponse("agent-already-connected");
+      const stale = this.#agent;
+      this.#agent = null;
+      this.#bridge?.dispose();
+      this.#bridge = null;
+      try {
+        stale.close(CLOSE_CODES.agentAlreadyConnected, "replaced by a newer connection");
+      } catch {
+        // 旧 socket 已经不可用：忽略
+      }
     }
 
     const pair = new WebSocketPair();
