@@ -8,6 +8,8 @@ window.__ModuleLoader__.load({
     const { useCallback, useEffect, useRef, useState } = React;
 
     const API = "/__anywhere/api";
+    // 前端静态资源版本：改动 ui/ 下的脚本时加一，强制拿新的
+    const QR_ASSET_VERSION = "2";
 
     // 只用主题令牌，不写死颜色，浅色/深色都跟随宿主
     const C = {
@@ -22,8 +24,16 @@ window.__ModuleLoader__.load({
     };
 
     const S = {
-      page: { display: "flex", flexDirection: "column", gap: 20, color: C.label, fontSize: 13, lineHeight: 1.6 },
-      title: { fontSize: 17, fontWeight: 600, letterSpacing: 0.2 },
+      page: { height: "100%", overflowY: "auto", color: C.label, fontSize: 13, lineHeight: 1.6 },
+      pageInner: {
+        maxWidth: 760,
+        margin: "0 auto",
+        padding: "28px 32px 48px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 20,
+      },
+      title: { fontSize: 20, fontWeight: 600, letterSpacing: 0.2 },
       description: { color: C.sub, marginTop: 6 },
       card: {
         display: "flex",
@@ -160,7 +170,7 @@ window.__ModuleLoader__.load({
       return h("button", { type: "button", style, disabled: props.disabled, onClick: props.onClick }, props.children);
     }
 
-    function RemoteAccessSection() {
+    function RemoteAccessPanel() {
       const [status, setStatus] = useState(null);
       const [pairUrl, setPairUrl] = useState(null);
       const [draftUrl, setDraftUrl] = useState("");
@@ -182,7 +192,8 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!pairUrl || !canvasRef.current) return;
         let cancelled = false;
-        import("/__anywhere/ui/qr.js")
+        // 带上版本号，避免页面模块缓存住旧编码器
+        import(`/__anywhere/ui/qr.js?v=${QR_ASSET_VERSION}`)
           .then((mod) => {
             if (cancelled || !canvasRef.current) return;
             mod.drawQr(canvasRef.current, mod.encodeQr(pairUrl));
@@ -262,6 +273,9 @@ window.__ModuleLoader__.load({
       return h(
         "div",
         { style: S.page },
+        h(
+          "div",
+          { style: S.pageInner },
 
         // 标题区：与「内置插件」等页面一致，标题 + 一句话说明
         h(
@@ -412,18 +426,49 @@ window.__ModuleLoader__.load({
               h("button", { type: "button", style: S.mutedButton, onClick: disable, disabled: busy }, "关闭远程接入"),
             )
           : null,
+        ),
+      );
+    }
+
+    // 侧边栏图标：显示器 + 手机，表示“这台电脑从别处接入”。
+    // 宿主只按设置项 id 映射图标，自定义设置项拿不到图标位，所以入口放在主界面的面板列表里。
+    function RemoteAccessIcon(props) {
+      const size = (props && props.size) || 16;
+      const active = Boolean(props && props.active);
+      return h(
+        "svg",
+        {
+          width: size,
+          height: size,
+          viewBox: "0 0 16 16",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: active ? 1.6 : 1.35,
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          "aria-hidden": "true",
+          focusable: "false",
+          style: { flex: "0 0 auto" },
+        },
+        h("rect", { x: 1, y: 2.2, width: 8.4, height: 6.2, rx: 1.2 }),
+        h("path", { d: "M5.2 8.4v2.2" }),
+        h("path", { d: "M3.5 10.6h3.4" }),
+        h("rect", { x: 10.8, y: 5.2, width: 3.8, height: 8.6, rx: 1.1 }),
+        h("path", { d: "M9.4 5.4h1.4" }),
       );
     }
 
     return {
       inject: ["slots"],
       apply(ctx) {
-        ctx.slots.inject("settings.section", () =>
+        // 主界面左侧面板：图标由我们自己画，点开就是整页管理界面
+        ctx.slots.inject("sidebar.panellist", () =>
           ctx.slots.register(
-            { name: "settings.section", id: "remote-access", order: 30, label: "远程接入" },
-            RemoteAccessSection,
+            { name: "sidebar.panellist", id: "remote-access", order: 20, label: "远程接入" },
+            RemoteAccessIcon,
           ),
         );
+        ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "remote-access" }, RemoteAccessPanel));
       },
     };
   },

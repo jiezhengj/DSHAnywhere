@@ -346,3 +346,17 @@ ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING
 修复方式：按 ISO/IEC 18004 重写（byte 模式、纠错 L、版本 1–6、BCH 格式信息、8 种掩码按罚分择优），
 绘制改为整数模块像素 + 设备像素比放大，避免浏览器缩放糊掉边缘。
 测试补齐回读校验：把矩阵栅格化后交给 jsQR 解码，必须与原文完全一致（覆盖 2–134 字节、scale 3/4）。
+
+## 管理界面的入口：主界面左栏面板
+
+DSH 设置左栏的图标是**硬编码**的：`dsh-client-ui-settings-general` 里的 `navIcon(id)` 只给
+`account / models / agent-presets / plugins / archived-sessions` 五个 id 配了专属图标，
+其余设置项一律回落到 `IconSettingsOutlineMedium`（就是「通用设置」那个齿轮），
+`settings.section` 的注册参数只有 `id / order / label`，插件没有传图标的位置。
+
+所以「远程接入」不再作为设置页，而是注册成主界面面板：
+
+- `sidebar.panellist`（list，`id` 对应面板）：组件就是这个按钮的图标，`ownerProps` 是 `{ size, active }`，可以画自己的矢量图；
+- `main`（keyed by `key`）：整页内容，点图标后占据主列。
+
+这样图标完全自由（现在是「显示器 + 手机」），也不和任何原生入口撞车。
