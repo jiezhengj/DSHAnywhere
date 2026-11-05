@@ -326,3 +326,13 @@ ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING
 （`packages/plugin/client.js` 注册进 `settings.section`，走同源 `/__anywhere/api/*`）；
 `/__anywhere` 只作为无 JS 降级路径保留。浏览器打开中转入口时，未配对显示配对说明页，
 配对后直接就是 DSH 自己的 WebUI。
+
+## 原生设置页的设计语言（远程接入页对其）
+
+对照 DSH 自己的设置页（通用设置 / 模型 / 内置插件）后，远程接入页按同一套语言重做：
+
+- 页面结构：17px 标题 + 一句话灰色说明，下面才是内容块
+- 内容块是白卡片（`--dsw-alias-bg-layer-1` 底、`--dsw-alias-border-l1` 细边、12px 圆角、14/16px 内边距），不再自造边框和阴影
+- 主操作是一条通栏虚线按钮（对应「＋ 添加模型提供商」），生成后在同一位置展开二维码卡片
+- 列表行 = 左侧名称 + 灰色次要信息，右侧胶囊描边按钮或红色文字按钮（对应「编辑 / 删除」）
+- 全部颜色走主题令牌（`--dsw-alias-label-*`、`--dsw-alias-border-*`、`--dsw-alias-state-*`），浅色/深色都跟随宿主；二维码画布固定白底是为了可扫

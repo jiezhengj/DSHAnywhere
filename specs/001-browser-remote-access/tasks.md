@@ -286,3 +286,4 @@ Phase 1 (Setup)
 
 - [x] T085 [交付形态] 管理界面搬进 DSH：新增 `packages/plugin/client.js`，在 `settings.section` 注册「远程接入」设置页（二维码、设备列表、轮换、关闭），只调用同源 `/__anywhere/api/*`；无 JS 的 `/__anywhere` 页保留为降级路径
 - [x] T086 [生命周期] 插件 `apply` 返回释放函数并在 `dispose` 里注销路由、停隧道。没有它时重装插件会报 `webserver: duplicate prefix route "/__anywhere"`（已加单测）
+- [x] T087 [视觉] 远程接入页对齐 DSH 原生设置页：标题+说明、白卡片、通栏虚线主操作、胶囊按钮/红色文字按钮、全部使用主题令牌；已在浅色与深色主题下截图核对

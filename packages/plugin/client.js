@@ -1,5 +1,5 @@
-// DSH 内的「远程接入」设置页：配对、设备与开关都在这里，不另开浏览器页面。
-// 只使用本机同源的 /__anywhere/api/*；远端（已配对设备）同样走这些接口。
+// DSH 设置里的「远程接入」页：配对、设备与中转都在这里，不另开浏览器页面。
+// 视觉沿用 DSH 原生设置页的语言：页面标题 + 说明、白卡片、细分隔线、右侧胶囊按钮。
 window.__ModuleLoader__.load({
   id: "@dsh-anywhere/plugin",
   factory(require) {
@@ -9,70 +9,151 @@ window.__ModuleLoader__.load({
 
     const API = "/__anywhere/api";
 
-    const styles = {
-      page: { display: "flex", flexDirection: "column", gap: 18, fontSize: 13, lineHeight: 1.6 },
+    // 只用主题令牌，不写死颜色，浅色/深色都跟随宿主
+    const C = {
+      label: "var(--dsw-alias-label-primary)",
+      sub: "var(--dsw-alias-label-secondary)",
+      border: "var(--dsw-alias-border-l1)",
+      borderStrong: "var(--dsw-alias-border-l2)",
+      brand: "var(--dsw-alias-brand-primary)",
+      ok: "var(--dsw-alias-state-success-primary)",
+      warn: "var(--dsw-alias-state-warn-primary)",
+      err: "var(--dsw-alias-state-error-primary)",
+    };
+
+    const S = {
+      page: { display: "flex", flexDirection: "column", gap: 20, color: C.label, fontSize: 13, lineHeight: 1.6 },
+      title: { fontSize: 17, fontWeight: 600, letterSpacing: 0.2 },
+      description: { color: C.sub, marginTop: 6 },
       card: {
         display: "flex",
         flexDirection: "column",
-        gap: 10,
+        gap: 12,
         padding: "14px 16px",
-        borderRadius: 10,
-        border: "1px solid rgba(127,127,127,0.28)",
+        borderRadius: 12,
+        border: `1px solid ${C.border}`,
+        background: "var(--dsw-alias-bg-layer-1)",
       },
-      row: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
-      hint: { fontSize: 12, opacity: 0.65 },
-      button: {
-        padding: "5px 12px",
-        borderRadius: 6,
-        border: "1px solid rgba(127,127,127,0.45)",
+      cardTitle: { fontSize: 14, fontWeight: 600 },
+      rowBetween: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
+      rowInline: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+      sub: { color: C.sub, fontSize: 12 },
+      mono: { fontSize: 12, color: C.sub, wordBreak: "break-all" },
+      pill: {
+        border: `1px solid ${C.border}`,
         background: "transparent",
-        color: "inherit",
+        color: C.label,
+        borderRadius: 8,
+        padding: "4px 12px",
+        fontSize: 13,
+        lineHeight: 1.5,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      },
+      pillPrimary: { color: C.brand, borderColor: C.borderStrong },
+      textButton: {
+        border: "none",
+        background: "transparent",
+        color: C.err,
         cursor: "pointer",
         fontSize: 13,
+        padding: "4px 2px",
+        whiteSpace: "nowrap",
       },
-      primary: { borderColor: "rgba(86,140,255,0.8)", color: "#568cff" },
-      mono: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, wordBreak: "break-all" },
-      dot: (ok) => ({
+      mutedButton: {
+        border: "none",
+        background: "transparent",
+        color: C.sub,
+        cursor: "pointer",
+        fontSize: 13,
+        padding: "4px 2px",
+        whiteSpace: "nowrap",
+      },
+      dashed: {
+        display: "block",
+        width: "100%",
+        border: `1px dashed ${C.borderStrong}`,
+        background: "transparent",
+        color: C.sub,
+        borderRadius: 12,
+        padding: "12px 16px",
+        fontSize: 13,
+        cursor: "pointer",
+        textAlign: "center",
+      },
+      input: {
+        flex: 1,
+        minWidth: 0,
+        border: `1px solid ${C.border}`,
+        background: "transparent",
+        color: C.label,
+        borderRadius: 8,
+        padding: "6px 10px",
+        fontSize: 13,
+        fontFamily: "inherit",
+        outline: "none",
+      },
+      dot: (color) => ({
         width: 8,
         height: 8,
         borderRadius: 4,
-        background: ok ? "#3fbf6a" : "#c9a227",
         display: "inline-block",
+        background: color,
+        flex: "0 0 auto",
       }),
-      device: {
+      deviceRow: {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 10,
-        padding: "6px 0",
-        borderTop: "1px solid rgba(127,127,127,0.16)",
+        gap: 12,
+        paddingTop: 10,
+        marginTop: 2,
+        borderTop: `1px solid ${C.border}`,
       },
+      qr: { width: 148, height: 148, borderRadius: 8, background: "#fff", border: `1px solid ${C.border}` },
     };
 
-    const call = async (path, init) => {
+    const call = async (path, body) => {
       try {
-        const res = await fetch(API + path, init);
-        const body = await res.json().catch(() => ({}));
-        return { ok: res.ok, status: res.status, body };
+        const res = await fetch(API + path, {
+          method: body === undefined ? "GET" : "POST",
+          headers: body === undefined ? undefined : { "content-type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        const payload = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, body: payload };
       } catch (err) {
         return { ok: false, status: 0, body: { error: { message: String(err) } } };
       }
     };
 
     const timeText = (iso) => {
-      if (!iso) return "从未";
-      const t = new Date(iso).getTime();
-      if (!Number.isFinite(t) || t <= 0) return "从未";
+      const t = iso ? new Date(iso).getTime() : NaN;
+      if (!Number.isFinite(t) || t <= 0) return "从未访问";
       const mins = Math.round((Date.now() - t) / 60000);
-      if (mins < 1) return "刚刚";
-      if (mins < 60) return `${mins} 分钟前`;
-      if (mins < 1440) return `${Math.round(mins / 60)} 小时前`;
-      return `${Math.round(mins / 1440)} 天前`;
+      if (mins < 1) return "刚刚访问";
+      if (mins < 60) return `${mins} 分钟前访问`;
+      if (mins < 1440) return `${Math.round(mins / 60)} 小时前访问`;
+      return `${Math.round(mins / 1440)} 天前访问`;
     };
+
+    const STATE_TEXT = {
+      connected: { text: "中转已连接", tone: "ok" },
+      connecting: { text: "正在连接中转", tone: "warn" },
+      reconnecting: { text: "正在重连中转", tone: "warn" },
+      idle: { text: "未连接中转", tone: "warn" },
+      unreachable: { text: "中转不可达", tone: "err" },
+    };
+
+    function Button(props) {
+      const style = props.variant === "primary" ? { ...S.pill, ...S.pillPrimary } : S.pill;
+      return h("button", { type: "button", style, disabled: props.disabled, onClick: props.onClick }, props.children);
+    }
 
     function RemoteAccessSection() {
       const [status, setStatus] = useState(null);
       const [pairUrl, setPairUrl] = useState(null);
+      const [draftUrl, setDraftUrl] = useState("");
       const [busy, setBusy] = useState(false);
       const [notice, setNotice] = useState(null);
       const canvasRef = useRef(null);
@@ -84,7 +165,7 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         void refresh();
-        const timer = setInterval(() => void refresh(), 4000);
+        const timer = setInterval(() => void refresh(), 5000);
         return () => clearInterval(timer);
       }, [refresh]);
 
@@ -102,37 +183,52 @@ window.__ModuleLoader__.load({
         };
       }, [pairUrl]);
 
-      const generate = async () => {
+      const act = async (path, body) => {
         setBusy(true);
-        setNotice(null);
-        const res = await call("/link", { method: "POST" });
+        const res = await call(path, body ?? {});
         setBusy(false);
-        if (res.ok && res.body.pairUrl) setPairUrl(res.body.pairUrl);
-        else setNotice(res.body?.error?.message ?? "生成失败：请先配置中转地址");
+        return res;
+      };
+
+      const configure = async () => {
+        const url = draftUrl.trim();
+        if (!url) return;
+        const res = await act("/relay", { url });
+        if (res.ok) {
+          setNotice(null);
+          setDraftUrl("");
+          void refresh();
+        } else {
+          setNotice(res.body?.error?.message ?? "保存失败，请检查地址");
+        }
+      };
+
+      const generate = async () => {
+        const res = await act("/link");
+        if (res.ok && res.body.pairUrl) {
+          setPairUrl(res.body.pairUrl);
+          setNotice(null);
+        } else {
+          setNotice(res.body?.error?.message ?? "生成失败，请确认中转已连接");
+        }
       };
 
       const rotate = async () => {
-        setBusy(true);
-        const res = await call("/rotate", { method: "POST" });
-        setBusy(false);
+        const res = await act("/rotate");
         setPairUrl(null);
         setNotice(res.ok ? `已作废 ${res.body.revokedLinks ?? 0} 条未使用链接` : "轮换失败");
         void refresh();
       };
 
       const disable = async () => {
-        setBusy(true);
-        await call("/disable", { method: "POST" });
-        setBusy(false);
+        await act("/disable");
         setPairUrl(null);
         setNotice("已关闭远程接入");
         void refresh();
       };
 
       const revoke = async (id) => {
-        setBusy(true);
-        await call(`/devices/${id}/revoke`, { method: "POST" });
-        setBusy(false);
+        await act(`/devices/${id}/revoke`);
         void refresh();
       };
 
@@ -147,81 +243,158 @@ window.__ModuleLoader__.load({
       };
 
       const relay = status?.relay ?? {};
-      const connected = relay.status === "connected";
       const configured = Boolean(relay.url);
+      const state = STATE_TEXT[relay.status] ?? { text: "状态未知", tone: "warn" };
+      const toneColor = state.tone === "ok" ? C.ok : state.tone === "err" ? C.err : C.warn;
       const devices = (status?.devices ?? []).filter((d) => d.state === "active");
+      const maxDevices = status?.limits?.maxDevices ?? 10;
 
       return h(
         "div",
-        { style: styles.page },
+        { style: S.page },
+
+        // 标题区：与「内置插件」等页面一致，标题 + 一句话说明
         h(
           "div",
-          { style: styles.card },
+          null,
+          h("div", { style: S.title }, "远程接入"),
           h(
             "div",
-            { style: styles.row },
-            h("span", { style: styles.dot(connected) }),
-            h("strong", null, configured ? (connected ? "中转已连接" : "中转未连接") : "还没配置中转"),
-            h("span", { style: styles.hint }, relay.url ? `${relay.url} · 今日请求 ${relay.requestsToday ?? 0}` : "在中转地址栏填写后保存"),
+            { style: S.description },
+            "把这台电脑通过你自己的 Cloudflare 中转开放给你自己，用手机或别的电脑继续操作。",
           ),
-          configured ? null : h("div", { style: styles.hint }, "先在自己的 Cloudflare 账号下部署中转，把 wrangler 输出的 https://<name>.workers.dev 地址填到这里。"),
-          pairUrl
-            ? h(
+        ),
+
+        // 中转配置 / 状态
+        configured
+          ? h(
+              "div",
+              { style: S.card },
+              h(
                 "div",
-                { style: { ...styles.row, alignItems: "flex-start" } },
-                h("canvas", { id: "qr", ref: canvasRef, style: { background: "#fff", borderRadius: 6 } }),
+                { style: S.rowBetween },
                 h(
                   "div",
-                  { style: { display: "flex", flexDirection: "column", gap: 8, maxWidth: 460 } },
-                  h("div", { style: styles.hint }, "用手机相机扫码；链接 10 分钟内有效且只能用一次。"),
-                  h("div", { style: styles.mono }, pairUrl),
-                  h(
-                    "div",
-                    { style: styles.row },
-                    h("button", { style: styles.button, onClick: copy, disabled: busy }, "复制链接"),
-                    h("button", { style: styles.button, onClick: () => setPairUrl(null), disabled: busy }, "收起"),
-                  ),
+                  { style: S.rowInline },
+                  h("span", { style: S.dot(toneColor) }),
+                  h("span", { style: S.cardTitle }, state.text),
                 ),
-              )
-            : h(
-                "div",
-                { style: styles.row },
-                h(
-                  "button",
-                  { style: { ...styles.button, ...styles.primary }, onClick: generate, disabled: busy || !configured },
-                  "生成配对链接",
-                ),
-                h("span", { style: styles.hint }, "生成后在这里直接扫码，不需要另开网页"),
+                h(Button, { onClick: rotate, disabled: busy }, "轮换链接"),
               ),
-          notice ? h("div", { style: styles.hint }, notice) : null,
-        ),
+              h("div", { style: S.mono }, relay.url),
+              h(
+                "div",
+                { style: S.sub },
+                `今日请求 ${relay.requestsToday ?? 0} 次 · 已配对 ${devices.length}/${maxDevices} 台设备`,
+              ),
+            )
+          : h(
+              "div",
+              { style: S.card },
+              h("div", { style: S.cardTitle }, "中转地址"),
+              h(
+                "div",
+                { style: S.sub },
+                "填写你在自己的 Cloudflare 账号下部署好的中转地址（wrangler 部署输出的 *.workers.dev）。",
+              ),
+              h(
+                "div",
+                { style: { ...S.rowInline, flexWrap: "nowrap" } },
+                h("input", {
+                  style: S.input,
+                  value: draftUrl,
+                  placeholder: "https://<名称>.<子域>.workers.dev",
+                  spellCheck: false,
+                  onChange: (event) => setDraftUrl(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === "Enter") void configure();
+                  },
+                }),
+                h(Button, { variant: "primary", onClick: configure, disabled: busy }, "保存"),
+              ),
+            ),
+
+        // 配对：默认是一条虚线主操作，生成后展开成二维码卡片
+        pairUrl
+          ? h(
+              "div",
+              { style: S.card },
+              h(
+                "div",
+                { style: S.rowBetween },
+                h("div", { style: S.cardTitle }, "扫码配对"),
+                h(
+                  "div",
+                  { style: S.rowInline },
+                  h(Button, { onClick: copy, disabled: busy }, "复制链接"),
+                  h(Button, { onClick: () => setPairUrl(null), disabled: busy }, "收起"),
+                ),
+              ),
+              h(
+                "div",
+                { style: { ...S.rowInline, alignItems: "flex-start", gap: 14, flexWrap: "nowrap" } },
+                h("canvas", { ref: canvasRef, style: S.qr }),
+                h(
+                  "div",
+                  { style: { display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } },
+                  h("div", { style: S.sub }, "用手机相机扫码打开，或把链接发到要加载的设备上。"),
+                  h("div", { style: S.mono }, pairUrl),
+                  h("div", { style: S.sub }, "链接 10 分钟内有效，且只能使用一次。"),
+                ),
+              ),
+            )
+          : h(
+              "button",
+              {
+                type: "button",
+                style: { ...S.dashed, cursor: configured ? "pointer" : "not-allowed", opacity: configured ? 1 : 0.55 },
+                onClick: generate,
+                disabled: busy || !configured,
+              },
+              configured ? "＋ 生成配对链接" : "＋ 配置中转后即可生成配对链接",
+            ),
+
+        // 设备
         h(
           "div",
-          { style: styles.card },
-          h("strong", null, `已配对设备（${devices.length}/${status?.limits?.maxDevices ?? 10}）`),
+          { style: S.card },
+          h(
+            "div",
+            { style: S.rowBetween },
+            h("div", { style: S.cardTitle }, "已配对设备"),
+            h("div", { style: S.sub }, `${devices.length}/${maxDevices}`),
+          ),
           devices.length === 0
-            ? h("div", { style: styles.hint }, "还没有已配对的设备")
-            : devices.map((d) =>
+            ? h("div", { style: S.sub }, "还没有设备。生成配对链接后扫码即可加入。")
+            : devices.map((device) =>
                 h(
                   "div",
-                  { key: d.id, style: styles.device },
+                  { key: device.id, style: S.deviceRow },
                   h(
                     "div",
-                    null,
-                    h("div", null, d.label),
-                    h("div", { style: styles.hint }, `最近访问：${timeText(d.lastSeenAt)} · 请求 ${d.requestCount ?? 0} 次`),
+                    { style: { display: "flex", flexDirection: "column", minWidth: 0 } },
+                    h("div", null, device.label),
+                    h("div", { style: S.sub }, `${timeText(device.lastSeenAt)} · 请求 ${device.requestCount ?? 0} 次`),
                   ),
-                  h("button", { style: styles.button, onClick: () => revoke(d.id), disabled: busy }, "撤销"),
+                  h(
+                    "button",
+                    { type: "button", style: S.textButton, onClick: () => revoke(device.id), disabled: busy },
+                    "撤销",
+                  ),
                 ),
               ),
         ),
-        h(
-          "div",
-          { style: styles.row },
-          h("button", { style: styles.button, onClick: rotate, disabled: busy || !configured }, "轮换链接"),
-          h("button", { style: styles.button, onClick: disable, disabled: busy || !configured }, "关闭远程接入"),
-          h("span", { style: styles.hint }, "轮换会让未使用的链接立刻失效；已配对设备不受影响。"),
-        ),
+
+        notice ? h("div", { style: S.sub }, notice) : null,
+
+        // 页脚：关掉整个入口
+        configured
+          ? h(
+              "div",
+              { style: { ...S.rowInline, justifyContent: "flex-end" } },
+              h("button", { type: "button", style: S.mutedButton, onClick: disable, disabled: busy }, "关闭远程接入"),
+            )
+          : null,
       );
     }
 
