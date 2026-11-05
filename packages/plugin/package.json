@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./client": "./client.js",
+    "./ui/*": "./ui/*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*"
@@ -11,11 +13,17 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
     }
   },
   "files": [
     "dist",
     "ui",
+    "client.js",
     "cordis.patch.yml"
   ],
   "scripts": {

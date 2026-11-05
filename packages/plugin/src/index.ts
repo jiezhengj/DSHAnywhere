@@ -65,6 +65,8 @@ export interface PluginRuntime {
   state(): StoreState;
   status(): { connection: TunnelStatus; relayOrigin: string | null; disabled?: string };
   stop(): void;
+  /** 卸载时释放路由与隧道：Cordis 重新装配插件前必须先清干净，否则报 duplicate prefix route */
+  dispose(): void;
 }
 
 /** 日志通道兜底：ctx.logger 不是可 inject 的服务，访问失败就退回 console */
@@ -172,6 +174,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
       state: () => current,
       status: () => ({ connection: "idle", relayOrigin: null, disabled: probe.reason }),
       stop: () => {},
+      dispose: () => {},
     };
   }
 
@@ -204,10 +207,24 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
       tunnel?.stop();
       tunnel = null;
     },
+    dispose: () => {
+      tunnel?.stop();
+      tunnel = null;
+      for (const dispose of routeDisposers.splice(0)) {
+        try {
+          dispose();
+        } catch {
+          // 宿主已卸载时忽略
+        }
+      }
+    },
   };
 
   if (!adapter) return runtime;
   const activeAdapter = adapter;
+
+  // 路由注册返回的 disposer 必须留着：插件被卸载/重装时要能把路由摘掉
+  const routeDisposers: (() => void)[] = [];
 
   const persist = async (next: StoreState): Promise<void> => {
     current = next;
@@ -279,7 +296,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
     }
   };
 
-  activeAdapter.registerRoute("prefix", "/__anywhere", async (req, res) => {
+  routeDisposers.push(activeAdapter.registerRoute("prefix", "/__anywhere", async (req, res) => {
     await ready;
     const path = requestPath(req as HostRequestLike);
     const method = ((req as HostRequestLike).method ?? "GET").toUpperCase();
@@ -330,14 +347,14 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
       { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" },
       renderStatusPage(view),
     );
-  });
+  }));
 
-  activeAdapter.registerRoute("prefix", "/p", async (req, res) => {
+  routeDisposers.push(activeAdapter.registerRoute("prefix", "/p", async (req, res) => {
     await ready;
     const outcome = handlePairing(requestPath(req as HostRequestLike), current, { now: now() });
     if (outcome.nextState) await persist(outcome.nextState);
     send(res as HostResponseLike, outcome.status, outcome.headers, outcome.body);
-  });
+  }));
 
   void ready.then(() => startTunnel());
   return runtime;
@@ -366,11 +383,14 @@ const plugin = {
   name: PLUGIN_NAME,
   // Cordis 的 inject 是服务名列表；写成对象会被当成名为 required/optional 的服务
   inject: ["webServer", "connection"],
-  apply(host: PluginHost, rawConfig: unknown): void {
-    // Cordis 的 apply 不能返回对象，否则会被当成非法 effect
-    const config = parseConfig(rawConfig);
-    const runtime = createRuntime(host, rawConfig, defaultOptions(config));
+  apply(host: PluginHost, rawConfig: unknown): () => void {
+    // Cordis 的 apply 不能返回对象，返回函数才是合法的释放钩子
+    const runtime = createRuntime(host, rawConfig, defaultOptions(parseConfig(rawConfig)));
     runtimeRef = runtime;
+    return () => {
+      runtime.dispose();
+      if (runtimeRef === runtime) runtimeRef = null;
+    };
   },
 };
 

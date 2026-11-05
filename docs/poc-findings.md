@@ -318,3 +318,11 @@ ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING
 连到真实中转并按帧转发到本机 DSH，用来在没有桌面版 UI 的情况下测中转链路与流量。
 用法：`BENCH_INSTALL_ID=<与中转 DSH_INSTALL_ID 一致> node scripts/bench-agent.mjs <中转地址> <本机地址> "<带 token 的 URL 的查询串>"`，
 运行中 `SIGUSR2` 打印统计、`SIGINT` 退出。
+
+## 管理界面的落点
+
+早期实现把管理界面做成了插件自己渲染的 HTML 页（`/__anywhere`）。这与产品预期不符——
+配对与设备管理应当就是 DSH 自己的界面。现在它们以 **设置 → 远程接入** 页呈现
+（`packages/plugin/client.js` 注册进 `settings.section`，走同源 `/__anywhere/api/*`）；
+`/__anywhere` 只作为无 JS 降级路径保留。浏览器打开中转入口时，未配对显示配对说明页，
+配对后直接就是 DSH 自己的 WebUI。
