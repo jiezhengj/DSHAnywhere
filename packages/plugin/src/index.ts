@@ -269,6 +269,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
     loopbackOrigin: activeAdapter.getLoopbackOrigin(),
     mintHostCookie: (force) => activeAdapter.mintHostCookie(force),
     send: (bytes) => tunnel?.send(bytes),
+    bufferedAmount: () => tunnel?.bufferedAmount ?? 0,
     authorize: (headers) => {
       if (!current.enabled) return "disabled";
       const credential = readCookie(headers, BROWSER_COOKIE);
@@ -314,7 +315,7 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
         res as HostResponseLike,
         200,
         { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
-        JSON.stringify({ ok: true, trace: gateway.trace(), counters: gateway.counters() }),
+        JSON.stringify({ ok: true, trace: gateway.trace(), counters: gateway.counters(), tunnel: tunnel?.diagnostics() ?? null }),
       );
       return;
     };

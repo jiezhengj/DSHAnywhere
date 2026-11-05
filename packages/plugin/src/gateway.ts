@@ -17,6 +17,7 @@ import type {
 } from "../../protocol/src/index.ts";
 import { FlowWindow, splitPayload } from "./flow.ts";
 import { filterResponseHeaders, rewriteRequestHeaders, toAbsoluteUrl } from "./rewrite.ts";
+import { Readable } from "node:stream";
 import { BROWSER_COOKIE } from "./rewrite.ts";
 import { renderDisabledPage, renderUnauthorizedPage } from "./pages.ts";
 
@@ -31,6 +32,8 @@ export interface GatewayDeps {
   loopbackOrigin: string;
   mintHostCookie: (force?: boolean) => Promise<string>;
   send: (bytes: Uint8Array) => void | boolean;
+  /** WS 出站缓冲区字节数，用来做背压 */
+  bufferedAmount?: () => number;
   fetchImpl?: typeof fetch;
   openSocket?: (url: string, headers: Record<string, string>) => WsClientLike;
   maxFrameBytes?: number;
@@ -68,10 +71,8 @@ export class Gateway {
     ms?: number;
   }[] = [];
   /** 已经决定不再等待额度的流：中转侧会自己缓冲，等只会拖慢 */
-  readonly #noCreditStreams = new Set<number>();
-  /** 出站令牌桶：容量与回填速度都按「一条隧道能咽下的量」来定 */
-  #tokens = 2 * 1024 * 1024;
-  #lastRefill = Date.now();
+  /** 出站缓冲区上限：超过就等它吐完再发，这才是真正的背压 */
+  static readonly HIGH_WATER = 4 * 1024 * 1024;
   /** 每个流对应 trace 里的下标，用来在响应结束时回填耗时 */
   readonly #traceIndex = new Map<number, number>();
   /** 流控与响应计数（诊断用） */
@@ -218,6 +219,7 @@ export class Gateway {
         line.startsWith(`${BROWSER_COOKIE}=`),
       );
       if (ownCookies.length > 0) responseHeaders["set-cookie"] = ownCookies[0]!;
+
       const declared = response.headers.get("content-length");
       let sent = 0;
       const startedAt = Date.now();
@@ -229,24 +231,21 @@ export class Gateway {
       this.#sendFrame(FrameType.HTTP_RESPONSE_HEAD, streamId, encodeJson(head));
 
       if (response.body) {
-        const reader = response.body.getReader();
         const window = new FlowWindow();
         this.#windows.set(streamId, window);
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (!value) continue;
-          for (const chunk of splitPayload(value, this.#deps.maxFrameBytes ?? MAX_FRAME_BYTES)) {
-            await this.#throttle(streamId, window, chunk.byteLength);
-            this.#sendFrame(FrameType.HTTP_RESPONSE_BODY, streamId, chunk);
-            window.consume(chunk.byteLength);
-            sent += chunk.byteLength;
-            this.#counters.bytesOut += chunk.byteLength;
+        const stream = Readable.fromWeb(response.body as never);
+        for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+          const value = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as ArrayBufferLike);
+          for (const part of splitPayload(value, this.#deps.maxFrameBytes ?? MAX_FRAME_BYTES)) {
+            await this.#throttle(streamId, window);
+            this.#sendFrame(FrameType.HTTP_RESPONSE_BODY, streamId, part);
+            window.consume(part.byteLength);
+            sent += part.byteLength;
+            this.#counters.bytesOut += part.byteLength;
           }
         }
       }
       this.#counters.responses += 1;
-      this.#noCreditStreams.delete(streamId);
       this.#traceIndex.set(streamId, traceIndex);
       const entry = this.#trace[traceIndex];
       if (entry) {
@@ -345,42 +344,24 @@ export class Gateway {
    * 否则一次额度迟到会让整份资源按 64KB × 5s 的速度爬。
    */
   /**
-   * 出站总闸门：令牌桶限速 + 单流窗口。
-   * 中转的 WS 是全双工单管道，一次压进去十几兆会把后续小请求堵在缓冲区里
-   * （表现为浏览器侧 504「电脑端响应超时」），所以这里必须自己限速。
+   * 出站总闸门：窗口 + WS 缓冲区水位。
+   * 中转的 WS 是全双工单管道，不按对方消化速度发送就会把十几兆堆在缓冲区里，
+   * 之后连 27 KB 的 CSS 都要排队几十秒（浏览器侧表现为 504「电脑端响应超时」）。
    */
-  async #throttle(streamId: number, window: FlowWindow, bytes: number): Promise<void> {
-    await this.#awaitCredit(streamId, window);
-    for (;;) {
-      const now = Date.now();
-      const elapsed = now - this.#lastRefill;
-      if (elapsed > 0) {
-        this.#tokens = Math.min(2 * 1024 * 1024, this.#tokens + (elapsed * 1024 * 1024) / 1000);
-        this.#lastRefill = now;
-      }
-      if (this.#tokens >= bytes) {
-        this.#tokens -= bytes;
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 40));
+  async #throttle(streamId: number, window: FlowWindow): Promise<void> {
+    // 不再等中转的 credit：中转给窗口很吝啬，等它反而把吞吐压到 300 KB/s。
+    // 真正该守的只有 WS 出站缓冲区水位。
+    void streamId;
+    void window;
+    const buffered = this.#deps.bufferedAmount;
+    if (!buffered) return;
+    const deadline = Date.now() + 20_000;
+    while (buffered() > Gateway.HIGH_WATER && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
     }
   }
 
-  async #awaitCredit(streamId: number, window: FlowWindow): Promise<void> {
-    if (!window.exhausted) return;
-    // 这条流已经等过一次没等到额度：后面整份响应都直接发，别一个分片卡 250ms
-    if (this.#noCreditStreams.has(streamId)) return;
-    const waiter = new Promise<void>((resolve) => {
-      this.#creditWaiters.set(streamId, resolve);
-    });
-    const started = Date.now();
-    await Promise.race([waiter, new Promise((resolve) => setTimeout(resolve, 500))]);
-    if (Date.now() - started > 100) {
-      this.#counters.stalls += 1;
-      this.#creditWaiters.delete(streamId);
-      this.#noCreditStreams.add(streamId);
-    }
-  }
+
 
   #error(streamId: number, code: ErrorCode): void {
     this.#sendFrame(FrameType.ERROR, streamId, encodeJson({ code, message: code, streamId }));

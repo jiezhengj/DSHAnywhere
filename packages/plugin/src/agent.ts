@@ -9,6 +9,8 @@ import {
 import type { AgentHello, Frame, RelayHelloAck } from "../../protocol/src/index.ts";
 
 export interface SocketLike {
+  /** 出站缓冲区字节数（undici/Node 的 WS 都有）：用它做真正的背压 */
+  readonly bufferedAmount?: number;
   /** 某些实现返回 Blob/字符串，需要显式要求二进制帧 */
   binaryType?: string;
   send(data: Uint8Array | ArrayBuffer | string): void;
@@ -104,6 +106,19 @@ export class AgentTunnel {
     return this.#failure;
   }
 
+  /** 诊断计数：连接建立次数与收到的帧数（判断是不是在反复重连） */
+  readonly #diag = { connects: 0, framesIn: 0, pingsOut: 0, lastFrameAgoMs: 0 };
+
+  diagnostics(): { connects: number; framesIn: number; pingsOut: number; lastFrameAgoMs: number } {
+    return { ...this.#diag, lastFrameAgoMs: this.#lastFrameAt ? this.#now() - this.#lastFrameAt : -1 };
+  }
+
+  /** 出站缓冲区：上层据此限速，避免把十几兆一次性塞进 WS 再也吐不出来 */
+  get bufferedAmount(): number {
+    const amount = this.#socket?.bufferedAmount;
+    return typeof amount === "number" && Number.isFinite(amount) ? amount : 0;
+  }
+
   start(): void {
     if (this.#stopped || this.#socket) return;
     this.#connect();
@@ -140,6 +155,7 @@ export class AgentTunnel {
 
     socket.addEventListener("open", () => {
       this.#attempt = 0;
+      this.#diag.connects += 1;
       this.#lastFrameAt = this.#now();
       this.#setStatus("connected");
       this.#sendHello(socket);
@@ -172,7 +188,7 @@ export class AgentTunnel {
       // 所以要设上限，超过就停在这里，由状态页提示用户手动重连。
       if (code === CLOSE_AGENT_ALREADY_CONNECTED) {
         this.#takeoverAttempts += 1;
-        if (this.#takeoverAttempts <= 3) {
+        if (this.#takeoverAttempts <= 2) {
           this.#scheduleReconnect();
           return;
         }
@@ -195,6 +211,7 @@ export class AgentTunnel {
 
   #handleFrame(socket: SocketLike, raw: Uint8Array | ArrayBuffer): void {
     this.#lastFrameAt = this.#now();
+    this.#diag.framesIn += 1;
     let frame: Frame;
     try {
       frame = decodeFrame(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
@@ -203,8 +220,12 @@ export class AgentTunnel {
       return;
     }
     if (frame.type === FrameType.RELAY_HELLO_ACK) {
-      // 中转认可了这次连接，才算真的站稳了：此时清空抢回计数
-      this.#takeoverAttempts = 0;
+      // 只有稳定连上一分钟才算真的站稳：过早清零会让两个实例无限互顶
+      this.#clearTakeoverReset();
+      this.#takeoverResetHandle = this.#setTimeout(() => {
+        this.#takeoverAttempts = 0;
+      }, 60_000);
+      this.#timers.add(this.#takeoverResetHandle);
       this.#options.onHelloAck?.(
         JSON.parse(new TextDecoder().decode(frame.payload)) as RelayHelloAck,
       );
@@ -236,6 +257,15 @@ export class AgentTunnel {
   #heartbeatHandle: unknown = null;
   /** 被顶掉后已尝试抢回的次数：用于避免新旧实例互相顶来顶去 */
   #takeoverAttempts = 0;
+  #takeoverResetHandle: unknown = null;
+
+  #clearTakeoverReset(): void {
+    if (this.#takeoverResetHandle !== null) {
+      this.#clearTimeout(this.#takeoverResetHandle);
+      this.#timers.delete(this.#takeoverResetHandle);
+      this.#takeoverResetHandle = null;
+    }
+  }
   /** 最近一次收到任何帧的时间：心跳靠它判断链路是不是哑了 */
   #lastFrameAt = 0;
   #now: () => number;
@@ -254,6 +284,7 @@ export class AgentTunnel {
         return;
       }
       try {
+        this.#diag.pingsOut += 1;
         socket.send(encodeFrame({ type: FrameType.PING, streamId: 0, flags: 0, payload: new Uint8Array() }));
       } catch {
         socket.close(1011, "heartbeat failed");

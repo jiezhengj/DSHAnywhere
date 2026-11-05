@@ -179,13 +179,14 @@ test("4003 被新连接顶掉后先重试抢回", () => {
 test("连续被顶掉超过上限后停止重试，避免新旧实例互相打架", () => {
   const h = harness();
   h.tunnel.start();
-  for (let i = 0; i < 4; i += 1) {
+  // 最多抢回 2 次：第 3 次再被顶掉就停在 failed，等用户手动重连
+  for (let i = 0; i < 3; i += 1) {
     h.sockets[h.sockets.length - 1]!.fire("open");
     h.sockets[h.sockets.length - 1]!.fire("close", { code: 4003 });
     h.clock.advance(60_000);
   }
   assert.equal(h.tunnel.status, "failed");
-  assert.equal(h.sockets.length, 4);
+  assert.equal(h.sockets.length, 3);
 });
 
 test("心跳收不到任何帧时判定链路已死并重连", () => {
