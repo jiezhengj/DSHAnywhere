@@ -157,6 +157,13 @@ window.__ModuleLoader__.load({
       return `${Math.round(mins / 1440)} 天前访问`;
     };
 
+    const formatRemain = (ms) => {
+      const total = Math.max(0, Math.round(ms / 1000));
+      const mins = Math.floor(total / 60);
+      const secs = total % 60;
+      return mins > 0 ? `${mins} 分 ${String(secs).padStart(2, "0")} 秒` : `${secs} 秒`;
+    };
+
     const STATE_TEXT = {
       connected: { text: "中转已连接", tone: "ok" },
       connecting: { text: "正在连接中转", tone: "warn" },
@@ -172,7 +179,8 @@ window.__ModuleLoader__.load({
 
     function RemoteAccessPanel() {
       const [status, setStatus] = useState(null);
-      const [pairUrl, setPairUrl] = useState(null);
+      const [pair, setPair] = useState(null); // { url, expiresAt }
+      const [tick, setTick] = useState(() => Date.now());
       const [draftUrl, setDraftUrl] = useState("");
       const [busy, setBusy] = useState(false);
       const [notice, setNotice] = useState(null);
@@ -189,20 +197,27 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer);
       }, [refresh]);
 
+      // 每秒走一格，用来显示链接剩余有效期
       useEffect(() => {
-        if (!pairUrl || !canvasRef.current) return;
+        if (!pair) return undefined;
+        const timer = setInterval(() => setTick(Date.now()), 1000);
+        return () => clearInterval(timer);
+      }, [pair]);
+
+      useEffect(() => {
+        if (!pair || !canvasRef.current) return;
         let cancelled = false;
         // 带上版本号，避免页面模块缓存住旧编码器
         import(`/__anywhere/ui/qr.js?v=${QR_ASSET_VERSION}`)
           .then((mod) => {
             if (cancelled || !canvasRef.current) return;
-            mod.drawQr(canvasRef.current, mod.encodeQr(pairUrl));
+            mod.drawQr(canvasRef.current, mod.encodeQr(pair.url));
           })
           .catch((err) => setNotice(`二维码绘制失败：${String(err)}`));
         return () => {
           cancelled = true;
         };
-      }, [pairUrl]);
+      }, [pair]);
 
       const act = async (path, body) => {
         setBusy(true);
@@ -227,7 +242,8 @@ window.__ModuleLoader__.load({
       const generate = async () => {
         const res = await act("/link");
         if (res.ok && res.body.pairUrl) {
-          setPairUrl(res.body.pairUrl);
+          setPair({ url: res.body.pairUrl, expiresAt: res.body.expiresAt ?? null });
+          setTick(Date.now());
           setNotice(null);
         } else {
           setNotice(res.body?.error?.message ?? "生成失败，请确认中转已连接");
@@ -236,14 +252,14 @@ window.__ModuleLoader__.load({
 
       const rotate = async () => {
         const res = await act("/rotate");
-        setPairUrl(null);
+        setPair(null);
         setNotice(res.ok ? `已作废 ${res.body.revokedLinks ?? 0} 条未使用链接` : "轮换失败");
         void refresh();
       };
 
       const disable = async () => {
         await act("/disable");
-        setPairUrl(null);
+        setPair(null);
         setNotice("已关闭远程接入");
         void refresh();
       };
@@ -254,9 +270,9 @@ window.__ModuleLoader__.load({
       };
 
       const copy = async () => {
-        if (!pairUrl) return;
+        if (!pair) return;
         try {
-          await navigator.clipboard.writeText(pairUrl);
+          await navigator.clipboard.writeText(pair.url);
           setNotice("链接已复制");
         } catch {
           setNotice("复制失败，请手动选中链接");
@@ -267,6 +283,12 @@ window.__ModuleLoader__.load({
       const configured = Boolean(relay.url);
       const state = STATE_TEXT[relay.status] ?? { text: "状态未知", tone: "warn" };
       const toneColor = state.tone === "ok" ? C.ok : state.tone === "err" ? C.err : C.warn;
+      const expiresAtMs = pair?.expiresAt ? new Date(pair.expiresAt).getTime() : 0;
+      const remainingMs = pair ? Math.max(0, expiresAtMs - tick) : 0;
+      const expired = Boolean(pair) && expiresAtMs > 0 && remainingMs <= 0;
+      const remainText = formatRemain(remainingMs);
+      const activeLinkMs = status?.activeLink?.expiresAt ? new Date(status.activeLink.expiresAt).getTime() : 0;
+      const activeLinkRemain = activeLinkMs > tick ? activeLinkMs - tick : 0;
       const devices = (status?.devices ?? []).filter((d) => d.state === "active");
       const maxDevices = status?.limits?.maxDevices ?? 10;
 
@@ -346,31 +368,41 @@ window.__ModuleLoader__.load({
             ),
 
         // 配对：默认是一条虚线主操作，生成后展开成二维码卡片
-        pairUrl
+        pair
           ? h(
               "div",
               { style: S.card },
               h(
                 "div",
                 { style: S.rowBetween },
-                h("div", { style: S.cardTitle }, "扫码配对"),
                 h(
                   "div",
                   { style: S.rowInline },
-                  h(Button, { onClick: copy, disabled: busy }, "复制链接"),
-                  h(Button, { onClick: () => setPairUrl(null), disabled: busy }, "收起"),
+                  h("div", { style: S.cardTitle }, "扫码配对"),
+                  expired
+                    ? h("span", { style: { ...S.sub, color: C.err } }, "已过期")
+                    : h("span", { style: S.sub }, `剩余 ${remainText}`),
+                ),
+                h(
+                  "div",
+                  { style: S.rowInline },
+                  h(Button, { variant: "primary", onClick: generate, disabled: busy }, "重新生成"),
+                  h(Button, { onClick: copy, disabled: busy || expired }, "复制链接"),
+                  h(Button, { onClick: () => setPair(null), disabled: busy }, "收起"),
                 ),
               ),
               h(
                 "div",
                 { style: { ...S.rowInline, alignItems: "flex-start", gap: 14, flexWrap: "nowrap" } },
-                h("canvas", { ref: canvasRef, style: S.qr }),
+                h("canvas", { ref: canvasRef, style: expired ? { ...S.qr, opacity: 0.28 } : S.qr }),
                 h(
                   "div",
                   { style: { display: "flex", flexDirection: "column", gap: 6, minWidth: 0 } },
                   h("div", { style: S.sub }, "用手机相机扫码打开，或把链接发到要加载的设备上。"),
-                  h("div", { style: S.mono }, pairUrl),
-                  h("div", { style: S.sub }, "链接 10 分钟内有效，且只能使用一次。"),
+                  h("div", { style: S.mono }, pair.url),
+                  expired
+                    ? h("div", { style: { ...S.sub, color: C.err } }, "这条链接已过期，点「重新生成」换一条新的。")
+                    : h("div", { style: S.sub }, "链接一次性使用，过期后重新生成即可。"),
                 ),
               ),
             )
@@ -384,6 +416,13 @@ window.__ModuleLoader__.load({
               },
               configured ? "＋ 生成配对链接" : "＋ 配置中转后即可生成配对链接",
             ),
+        !pair && activeLinkRemain > 0
+          ? h(
+              "div",
+              { style: S.sub },
+              `已有一条没用掉的配对链接（${formatRemain(activeLinkRemain)}后过期）。出于安全这里不回显，重新生成会立刻替换它。`,
+            )
+          : null,
 
         // 设备
         h(
@@ -443,7 +482,7 @@ window.__ModuleLoader__.load({
           viewBox: "0 0 16 16",
           fill: "none",
           stroke: "currentColor",
-          strokeWidth: active ? 1.6 : 1.35,
+          strokeWidth: active ? 1.15 : 1,
           strokeLinecap: "round",
           strokeLinejoin: "round",
           "aria-hidden": "true",
