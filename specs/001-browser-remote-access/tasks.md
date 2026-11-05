@@ -300,3 +300,4 @@ Phase 1 (Setup)
 - [x] T098 [缺陷] 「今日请求」恒为 0：`recordSuccess` 从未被调用。鉴权通过时累加统计与设备 `lastSeenAt`，落盘做 5 s 防抖
 - [x] T099 [诊断] 新增本机只读诊断 `/__anywhere/api/trace`（最近 80 条隧道请求：路径、鉴权结果、状态码、耗时、字节数），用于这次定位；隧道内访问该前缀仍一律 404
 - [x] T100 [缺陷] 页面加载期大面积 504：插件每发一个分片就等一次中转 credit，吞吐被钉在 300 KB/s，9.1 MB 的插件包必然超过中转 30 s 单流超时。发送侧改为只守 WS 出站缓冲区水位（4 MB），实测 941 KB 从 3.0 s 降到 1.67 s，整页 20 s 内加载完并正常挂载
+- [x] T101 [事故] 插件把 DSH 宿主带崩：上游 WS 还在 CONNECTING 时裸调 `send()` 抛 `InvalidStateError`，而 `Gateway.onFrame` 是 async，同步异常变成未处理 rejection，宿主直接 `exited with 1`。所有上游 WS 发送改走 `#wsSend`（排队/丢弃/兜异常），`#handleFrame` 兜异步 rejection，握手与启动链补 `catch`；新增两条回归单测

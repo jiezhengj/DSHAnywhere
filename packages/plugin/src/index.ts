@@ -377,7 +377,11 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
     send(res as HostResponseLike, outcome.status, outcome.headers, outcome.body);
   }));
 
-  void ready.then(() => startTunnel());
+  void ready
+    .then(() => startTunnel())
+    .catch((err: unknown) => {
+      console.error("[dsh-anywhere] 启动隧道失败", err);
+    });
   return runtime;
 }
 

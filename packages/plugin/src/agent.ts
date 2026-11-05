@@ -26,7 +26,7 @@ export interface TunnelOptions {
   agentVersion: string;
   dshVersion: string;
   capabilities: string[];
-  onFrame?: (frame: Frame) => void;
+  onFrame?: (frame: Frame) => void | Promise<void>;
   onStatus?: (status: TunnelStatus, detail?: string) => void;
   onHelloAck?: (ack: RelayHelloAck) => void;
 }
@@ -237,7 +237,13 @@ export class AgentTunnel {
     }
     if (frame.type === FrameType.PONG) return;
     try {
-      this.#options.onFrame?.(frame);
+      // onFrame 是 async 的：同步 throw 会变成 rejected promise，
+      // 未处理的 rejection 在 Node 24 会直接结束进程（真实事故：宿主 exited with 1）。
+      // 所以这里既兜同步异常，也兜异步 rejection。
+      const pending = this.#options.onFrame?.(frame);
+      if (pending && typeof (pending as Promise<void>).catch === "function") {
+        void (pending as Promise<void>).catch(() => {});
+      }
     } catch {
       // 单帧处理失败不应带崩宿主进程：丢弃该帧，连接继续
     }

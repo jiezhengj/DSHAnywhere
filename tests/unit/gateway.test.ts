@@ -281,3 +281,55 @@ test("超过单帧上限的 WS 消息被分片传输并原样还原", async () =
   for (const f of frames) await gateway.onFrame(f);
   assert.equal(received.at(-1), big);
 });
+
+test("上游 WS 还没连上时到达的数据先排队，连上后按序发出，不抛异常", async () => {
+  const listeners = new Map<string, ((ev: unknown) => void)[]>();
+  const outbound: (Uint8Array | string)[] = [];
+  let state = 0; // CONNECTING
+  const socket: WsClientLike = {
+    get readyState() {
+      return state;
+    },
+    send: (data) => {
+      // 真实 undici 在 CONNECTING 时抛 InvalidStateError，这里照样抛，验证不逃出去
+      if (state === 0) throw new DOMException("Sent before connected.", "InvalidStateError");
+      outbound.push(data);
+    },
+    close: () => {},
+    addEventListener(type, cb) {
+      const arr = listeners.get(type) ?? [];
+      arr.push(cb);
+      listeners.set(type, arr);
+    },
+  };
+  const sent: Frame[] = [];
+  const gateway = new Gateway({
+    loopbackOrigin: "http://127.0.0.1:50743",
+    mintHostCookie: async () => "c=1",
+    send: (bytes) => sent.push(decodeFrame(bytes)),
+    openSocket: () => socket,
+  });
+  await gateway.onFrame({ type: FrameType.WS_OPEN, streamId: 9, flags: 0, payload: encodeJson({ path: "/api/remote.mux", headers: {} }) });
+  await new Promise((r) => setTimeout(r, 10));
+
+  await gateway.onFrame({ type: FrameType.WS_DATA, streamId: 9, flags: FrameFlags.WS_TEXT, payload: new TextEncoder().encode("first") });
+  await gateway.onFrame({ type: FrameType.WS_DATA, streamId: 9, flags: FrameFlags.WS_TEXT, payload: new TextEncoder().encode("second") });
+  assert.deepEqual(outbound, []);
+
+  state = 1; // OPEN
+  for (const cb of listeners.get("open") ?? []) cb({});
+  assert.deepEqual(outbound, ["first", "second"]);
+});
+
+test("单帧处理抛异常不会中断隧道", async () => {
+  const gateway = new Gateway({
+    loopbackOrigin: "http://127.0.0.1:50743",
+    mintHostCookie: async () => "c=1",
+    send: () => {
+      throw new Error("boom");
+    },
+  });
+  // send 抛错也不能让 onFrame 冒出去（真实事故：宿主进程以 1 退出）
+  await gateway.onFrame({ type: FrameType.WS_DATA, streamId: 1, flags: 0, payload: new Uint8Array() });
+  await gateway.onFrame({ type: FrameType.PING, streamId: 0, flags: 0, payload: new Uint8Array() });
+});

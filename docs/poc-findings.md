@@ -389,3 +389,23 @@ DSH 设置左栏的图标是**硬编码**的：`dsh-client-ui-settings-general` 
 修法：发送侧不再等待 credit，只守 WS 出站缓冲区水位（4 MB 高水位）；实测同一个 941 KB 的包从 3.0 s 降到 1.67 s，整页 13.6 MB 在 20 s 内加载完，`#root` 正常挂载，刷新也不再 504。
 
 这个水位背压同时替代了之前的令牌桶：令牌桶按固定速率灌数据，遇到慢链路照样堆积；缓冲区水位才是「对方吃多少我发多少」。
+
+## 插件把宿主进程带崩（已修复）
+
+现象：桌面端宿主进程直接以 1 退出，重启后 GUI 端口变化；`~/Library/Logs/DeepSeek Harness/crash-*.log` 里写着：
+
+```
+dsh: fatal load failure: DOMException [InvalidStateError]: Sent before connected.
+    at WebSocket.send (undici)
+    at _Gateway.onFrame (.../@dsh-anywhere/plugin/dist/index.js)
+    at #handleFrame ... at WebSocket.<anonymous>
+```
+
+两处叠加才致命：
+
+1. 浏览器把实时通道的数据推到上游 WS 时，上游可能还在 `CONNECTING`。undici 的 `send()` 此时抛 `InvalidStateError`。转发路径是裸的 `socket.send(...)`。
+2. `Gateway.onFrame` 是 async，`AgentTunnel.#handleFrame` 只用 try/catch 兜同步异常——同步 throw 变成 **rejected promise**，Node 24 的未处理 rejection 直接结束进程。
+
+修法：所有发往上游 WS 的数据统一走 `#wsSend`：已打开就直接发（仍兜异常）、`CONNECTING` 就排队等 open 后按序冲刷（超 4 MB 回背压错误）、已关闭就丢弃；`#handleFrame` 同时兜同步异常与异步 rejection；WS 握手链和隧道启动链都补 `catch`。
+
+教训：插件里的任何帧处理函数都不许把异常抛给事件回调——宿主进程与插件共命运。

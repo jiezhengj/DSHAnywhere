@@ -22,6 +22,8 @@ import { BROWSER_COOKIE } from "./rewrite.ts";
 import { renderDisabledPage, renderUnauthorizedPage } from "./pages.ts";
 
 export interface WsClientLike {
+  /** 0=CONNECTING 1=OPEN 2=CLOSING 3=CLOSED；undici/浏览器实现都有 */
+  readonly readyState?: number;
   send(data: Uint8Array | string): void;
   close(code?: number, reason?: string): void;
   addEventListener(type: "open" | "message" | "close" | "error", cb: (event: unknown) => void): void;
@@ -48,6 +50,8 @@ interface PendingRequest {
 }
 
 const MAX_REQUEST_BODY = 25 * 1024 * 1024;
+/** WS 透传时上游还没连上允许滞留的字节数；超了就回背压错误，不能无限吞 */
+const MAX_WS_BACKLOG = 4 * 1024 * 1024;
 
 /**
  * 插件侧网关：把中转发来的帧还原成对 loopback 的 HTTP/WS 请求，
@@ -59,6 +63,10 @@ export class Gateway {
   readonly #windows = new Map<number, FlowWindow>();
   readonly #creditWaiters = new Map<number, () => void>();
   readonly #sockets = new Map<number, WsClientLike>();
+  /** 上游 WS 还在 CONNECTING 时滞留的帧：直接 send 会抛 InvalidStateError，
+   *  异常一旦逃出帧处理函数就会把宿主进程带崩（真实事故：dsh host exited with 1）。 */
+  readonly #wsQueue = new Map<number, Array<Uint8Array | string>>();
+  readonly #wsQueuedBytes = new Map<number, number>();
   readonly #wsParts = new Map<number, Uint8Array[]>();
   /** 最近的隧道请求摘要（诊断用，仅本地可读） */
   readonly #trace: {
@@ -135,11 +143,8 @@ export class Gateway {
         if (!socket) return;
         const whole = parts.length === 1 ? parts[0]! : concat(parts, parts.reduce((n, p) => n + p.byteLength, 0));
         // DSH 的实时通道只接受文本帧：必须保留文本标记
-        if ((frame.flags & FrameFlags.WS_TEXT) !== 0) {
-          socket.send(new TextDecoder().decode(whole));
-        } else {
-          socket.send(whole);
-        }
+        const isText = (frame.flags & FrameFlags.WS_TEXT) !== 0;
+        this.#wsSend(frame.streamId, socket, isText ? new TextDecoder().decode(whole) : whole);
         return;
       }
       case FrameType.WS_CLOSE: {
@@ -280,6 +285,53 @@ export class Gateway {
     return await fetchImpl(url, init);
   }
 
+  /**
+   * 发往上游 WS 的唯一入口：
+   * - 已打开：直接发（仍然兜住异常，socket 可能正好被对端关掉）
+   * - 还在 CONNECTING：先排队，open 后按序冲刷
+   * - 已关闭：丢弃
+   * 这里的任何异常都不能向上抛：帧处理函数抛出会让宿主进程直接退出。
+   */
+  #wsSend(streamId: number, socket: WsClientLike, data: Uint8Array | string): void {
+    const state = socket.readyState;
+    if (state === undefined || state === 1) {
+      try {
+        socket.send(data);
+      } catch {
+        this.#wsQueue.delete(streamId);
+        this.#wsQueuedBytes.delete(streamId);
+      }
+      return;
+    }
+    if (state !== 0) return;
+    const size = typeof data === "string" ? data.length : data.byteLength;
+    const queued = (this.#wsQueuedBytes.get(streamId) ?? 0) + size;
+    if (queued > MAX_WS_BACKLOG) {
+      this.#wsQueue.delete(streamId);
+      this.#wsQueuedBytes.delete(streamId);
+      this.#error(streamId, "backpressure");
+      return;
+    }
+    const list = this.#wsQueue.get(streamId) ?? [];
+    list.push(data);
+    this.#wsQueue.set(streamId, list);
+    this.#wsQueuedBytes.set(streamId, queued);
+  }
+
+  #flushWsQueue(streamId: number, socket: WsClientLike): void {
+    const list = this.#wsQueue.get(streamId);
+    this.#wsQueue.delete(streamId);
+    this.#wsQueuedBytes.delete(streamId);
+    if (!list) return;
+    for (const item of list) {
+      try {
+        socket.send(item);
+      } catch {
+        return;
+      }
+    }
+  }
+
   #openSocket(streamId: number, open: WsOpen): void {
     const wsGate = this.#deps.authorize?.(open.headers ?? {}) ?? "ok";
     if (wsGate !== "ok") {
@@ -302,6 +354,7 @@ export class Gateway {
       this.#sockets.set(streamId, socket);
       socket.addEventListener("open", () => {
         this.#sendFrame(FrameType.WS_OPEN_ACK, streamId, encodeJson({ ok: true }));
+        this.#flushWsQueue(streamId, socket);
       });
       socket.addEventListener("message", (event) => {
         const data = (event as { data?: ArrayBuffer | Uint8Array | string }).data;
@@ -331,10 +384,16 @@ export class Gateway {
           encodeJson({ code: ev.code ?? 1000, reason: ev.reason ?? "" }),
         );
         this.#sockets.delete(streamId);
+        this.#wsQueue.delete(streamId);
+        this.#wsQueuedBytes.delete(streamId);
       });
       socket.addEventListener("error", () => {
         this.#sendFrame(FrameType.WS_OPEN_ACK, streamId, encodeJson({ ok: false, reason: "upstream-unreachable" }));
       });
+    }).catch(() => {
+      // 握手阶段出错（拿不到宿主 cookie、上游拒绝连接）：回一个失败 ACK，
+      // 绝不能让 rejection 冒出去结束宿主进程
+      this.#sendFrame(FrameType.WS_OPEN_ACK, streamId, encodeJson({ ok: false, reason: "upstream-unreachable" }));
     });
   }
 
