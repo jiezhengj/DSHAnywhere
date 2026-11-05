@@ -220,7 +220,9 @@ ELECTRON_RUN_AS_NODE=1 "<app>" "<bin.js>" --profile dshanywhere-cold --port 5099
 ### 部署运维发现
 
 - **Durable Object 会继续跑旧代码**：重新 `deploy` 后，已存在的 DO 实例仍执行创建时的脚本版本，
-  表现为"改了代码但行为没变"。排查时要么换 `installId` 验证新实例，要么等实例被驱逐。
+  表现为"改了代码但行为没变"，而且旧实例里的内存状态（如已连接的 agent）也会一直留着。
+  升级中转后如果发现行为没变，用 `npx wrangler delete --name <worker> && npx wrangler deploy`
+  重建，会得到全新的实例（设备配对在桌面端与浏览器侧，不在 DO 里，删了不丢配对）。
 - `cf deploy` 需要新的 `cloudflare.config.ts`（实验性新配置）；经典 `wrangler.toml` 项目仍建议用
   `npx wrangler deploy`，文档里的配置路径已修正为 `packages/relay/wrangler.toml`。
 

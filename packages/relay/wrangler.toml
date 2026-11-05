@@ -7,7 +7,7 @@ workers_dev = true
 
 # v1：一台中转对应一台电脑，installId 取默认值即可
 [vars]
-DSH_INSTALL_ID = "e2e-8"
+DSH_INSTALL_ID = "default"
 
 [[durable_objects.bindings]]
 name = "RELAY_OBJECT"
