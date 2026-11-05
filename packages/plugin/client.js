@@ -38,6 +38,16 @@ window.__ModuleLoader__.load({
       rowBetween: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
       rowInline: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
       sub: { color: C.sub, fontSize: 12 },
+      steps: {
+        margin: 0,
+        paddingLeft: 20,
+        color: C.sub,
+        fontSize: 12,
+        lineHeight: 1.7,
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+      },
       mono: { fontSize: 12, color: C.sub, wordBreak: "break-all" },
       pill: {
         border: `1px solid ${C.border}`,
@@ -291,11 +301,18 @@ window.__ModuleLoader__.load({
           : h(
               "div",
               { style: S.card },
-              h("div", { style: S.cardTitle }, "中转地址"),
+              h("div", { style: S.cardTitle }, "连接你自己的中转"),
               h(
                 "div",
                 { style: S.sub },
-                "填写你在自己的 Cloudflare 账号下部署好的中转地址（wrangler 部署输出的 *.workers.dev）。",
+                "中转是你在自己 Cloudflare 账号下部署的一个 Worker，浏览器和这台电脑都只连它。配置之前不会建立任何外部连接。",
+              ),
+              h(
+                "ol",
+                { style: S.steps },
+                h("li", null, "在本项目根目录执行 npx wrangler deploy --config packages/relay/wrangler.toml"),
+                h("li", null, "首次执行会打开浏览器，登录并授权你的 Cloudflare 账号"),
+                h("li", null, "部署完成后终端会打印 https://<名称>.<子域>.workers.dev，粘贴到下面"),
               ),
               h(
                 "div",
