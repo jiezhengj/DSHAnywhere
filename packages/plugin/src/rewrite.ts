@@ -60,6 +60,9 @@ export function filterResponseHeaders(input: Record<string, string>): Record<str
     const lower = name.toLowerCase();
     if (lower === "set-cookie" || lower === "set-cookie2") continue;
     if (lower === "transfer-encoding" || lower === "connection") continue;
+    // fetch 已经把响应体解压过了：再把这个头透给浏览器，浏览器会拿明文当 gzip 解，
+    // 模块脚本直接解析失败 —— 远程打开时整页空白就是这么来的。
+    if (lower === "content-encoding" || lower === "content-length") continue;
     out[lower] = value;
   }
   return out;

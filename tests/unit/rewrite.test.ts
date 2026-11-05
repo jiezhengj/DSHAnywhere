@@ -53,6 +53,19 @@ test("上游 Set-Cookie 不转发给浏览器", () => {
   assert.equal(out["content-type"], "text/html");
 });
 
+test("content-encoding / content-length 不透传给浏览器（fetch 已解压）", () => {
+  const out = filterResponseHeaders({
+    "content-type": "text/javascript",
+    "content-encoding": "gzip",
+    "content-length": "941436",
+    etag: '"abc"',
+  });
+  assert.equal(out["content-encoding"], undefined);
+  assert.equal(out["content-length"], undefined);
+  assert.equal(out["content-type"], "text/javascript");
+  assert.equal(out["etag"], '"abc"');
+});
+
 test("相对路径解析到 loopback 绝对地址", () => {
   assert.equal(toAbsoluteUrl("/", options.loopbackOrigin), "http://127.0.0.1:50743/");
   assert.equal(toAbsoluteUrl("/api/remote.mux", options.loopbackOrigin), "http://127.0.0.1:50743/api/remote.mux");

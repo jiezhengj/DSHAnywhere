@@ -31,6 +31,9 @@ function fakeClock() {
     get pending() {
       return queue.length;
     },
+    get time() {
+      return now;
+    },
   };
 }
 
@@ -76,6 +79,7 @@ function harness(overrides: Partial<{ random: () => number; onHelloAck: (ack: { 
       ...(overrides.onHelloAck ? { onHelloAck: overrides.onHelloAck } : {}),
     },
     {
+      now: () => clock.time,
       createSocket: () => {
         const s = fakeSocket();
         sockets.push(s);
@@ -123,13 +127,13 @@ test("HELLO_ACK 回调 relayOrigin", () => {
   assert.equal(origin, "https://r.example");
 });
 
-test("心跳按 25 秒发送 PING", () => {
+test("心跳按 5 秒发送 PING", () => {
   const h = harness();
   h.tunnel.start();
   const socket = h.sockets[0]!;
   socket.fire("open");
   const before = socket.sentFrames.filter((f) => f.type === FrameType.PING).length;
-  h.clock.advance(25_000);
+  h.clock.advance(5_000);
   assert.equal(socket.sentFrames.filter((f) => f.type === FrameType.PING).length, before + 1);
 });
 
@@ -162,12 +166,37 @@ test("4002 版本不兼容不再重连", () => {
   assert.equal(h.sockets.length, 1);
 });
 
-test("4003 已连接不再重连", () => {
+test("4003 被新连接顶掉后先重试抢回", () => {
   const h = harness();
   h.tunnel.start();
   h.sockets[0]!.fire("open");
   h.sockets[0]!.fire("close", { code: 4003 });
+  assert.equal(h.tunnel.status, "reconnecting");
+  h.clock.advance(60_000);
+  assert.equal(h.sockets.length, 2);
+});
+
+test("连续被顶掉超过上限后停止重试，避免新旧实例互相打架", () => {
+  const h = harness();
+  h.tunnel.start();
+  for (let i = 0; i < 4; i += 1) {
+    h.sockets[h.sockets.length - 1]!.fire("open");
+    h.sockets[h.sockets.length - 1]!.fire("close", { code: 4003 });
+    h.clock.advance(60_000);
+  }
   assert.equal(h.tunnel.status, "failed");
+  assert.equal(h.sockets.length, 4);
+});
+
+test("心跳收不到任何帧时判定链路已死并重连", () => {
+  const h = harness();
+  h.tunnel.start();
+  h.sockets[0]!.fire("open");
+  // 三拍心跳都没收到任何帧（PONG 也没有）→ 认为半开连接，主动关闭并重连
+  h.clock.advance(80_000);
+  assert.deepEqual(h.sockets[0]!.closed, { code: 1011, reason: "heartbeat timeout" });
+  h.clock.advance(60_000);
+  assert.equal(h.sockets.length, 2, "应当已经重连");
 });
 
 test("stop 后不再重连", () => {

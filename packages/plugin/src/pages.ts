@@ -136,7 +136,9 @@ export function renderUnauthorizedPage(): string {
     ...errorSpec("protocol"),
     status: 401,
     title: "这台设备还没有配对",
-    hint: "请回到电脑端重新生成配对链接；如果刚清理过浏览器数据，重新扫一次码即可。",
+    hint:
+      "请回到电脑端重新生成配对链接再扫一次；如果浏览器禁用了 Cookie，" +
+      "或是在微信、QQ 等应用内打开的链接，请改用系统浏览器（Safari / Chrome）打开。",
   });
 }
 

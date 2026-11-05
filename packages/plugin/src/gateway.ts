@@ -57,9 +57,43 @@ export class Gateway {
   readonly #creditWaiters = new Map<number, () => void>();
   readonly #sockets = new Map<number, WsClientLike>();
   readonly #wsParts = new Map<number, Uint8Array[]>();
+  /** 最近的隧道请求摘要（诊断用，仅本地可读） */
+  readonly #trace: {
+    at: number;
+    path: string;
+    gate: string;
+    status: number;
+    declared?: string | null;
+    sent?: number;
+    ms?: number;
+  }[] = [];
+  /** 已经决定不再等待额度的流：中转侧会自己缓冲，等只会拖慢 */
+  readonly #noCreditStreams = new Set<number>();
+  /** 出站令牌桶：容量与回填速度都按「一条隧道能咽下的量」来定 */
+  #tokens = 2 * 1024 * 1024;
+  #lastRefill = Date.now();
+  /** 每个流对应 trace 里的下标，用来在响应结束时回填耗时 */
+  readonly #traceIndex = new Map<number, number>();
+  /** 流控与响应计数（诊断用） */
+  readonly #counters = { credits: 0, stalls: 0, responses: 0, bytesOut: 0 };
 
   constructor(deps: GatewayDeps) {
     this.#deps = deps;
+  }
+
+  /** 请求摘要：只留最近 80 条，给本地诊断接口用 */
+  trace(): { at: number; path: string; gate: string; status: number }[] {
+    return this.#trace.slice(-80);
+  }
+
+  counters(): { credits: number; stalls: number; responses: number; bytesOut: number } {
+    return { ...this.#counters };
+  }
+
+  #note(path: string, gate: string, status: number, extra: { declared?: string | null; sent?: number } = {}): number {
+    this.#trace.push({ at: Date.now(), path: path.slice(0, 200), gate, status, ...extra });
+    if (this.#trace.length > 80) this.#trace.shift();
+    return this.#trace.length - 1;
   }
 
   async onFrame(frame: Frame): Promise<void> {
@@ -116,6 +150,7 @@ export class Gateway {
       }
       case FrameType.FLOW_CREDIT: {
         const grant = decodeJson<{ bytes: number }>(frame.payload).bytes;
+        this.#counters.credits += 1;
         this.#windows.get(frame.streamId)?.grant(grant);
         this.#creditWaiters.get(frame.streamId)?.();
         return;
@@ -142,6 +177,7 @@ export class Gateway {
     if (!pending) return;
     this.#pending.delete(streamId);
 
+    this.#traceIndex.delete(streamId);
     const body = pending.chunks.length ? concat(pending.chunks, pending.bytes) : null;
     if (pending.head.path.startsWith("/__anywhere/")) {
       const denied: HttpResponseHead = { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } };
@@ -157,6 +193,7 @@ export class Gateway {
       ? "ok"
       : (this.#deps.authorize?.(pending.head.headers ?? {}) ?? "ok");
     if (gate !== "ok") {
+      this.#note(pending.head.path, `denied:${gate}`, gate === "disabled" ? 503 : 401);
       const head: HttpResponseHead = {
         status: 401,
         headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" },
@@ -181,6 +218,10 @@ export class Gateway {
         line.startsWith(`${BROWSER_COOKIE}=`),
       );
       if (ownCookies.length > 0) responseHeaders["set-cookie"] = ownCookies[0]!;
+      const declared = response.headers.get("content-length");
+      let sent = 0;
+      const startedAt = Date.now();
+      const traceIndex = this.#note(pending.head.path, gate, response.status, { declared });
       const head: HttpResponseHead = {
         status: response.status,
         headers: responseHeaders,
@@ -196,11 +237,21 @@ export class Gateway {
           if (done) break;
           if (!value) continue;
           for (const chunk of splitPayload(value, this.#deps.maxFrameBytes ?? MAX_FRAME_BYTES)) {
-            await this.#awaitCredit(streamId, window);
+            await this.#throttle(streamId, window, chunk.byteLength);
             this.#sendFrame(FrameType.HTTP_RESPONSE_BODY, streamId, chunk);
             window.consume(chunk.byteLength);
+            sent += chunk.byteLength;
+            this.#counters.bytesOut += chunk.byteLength;
           }
         }
+      }
+      this.#counters.responses += 1;
+      this.#noCreditStreams.delete(streamId);
+      this.#traceIndex.set(streamId, traceIndex);
+      const entry = this.#trace[traceIndex];
+      if (entry) {
+        entry.sent = sent;
+        entry.ms = Date.now() - startedAt;
       }
       this.#sendFrame(FrameType.HTTP_RESPONSE_END, streamId, new Uint8Array());
     } catch (err) {
@@ -288,12 +339,47 @@ export class Gateway {
     });
   }
 
+  /**
+   * 窗口耗尽时短暂等待中转补充额度。中转本身会把数据缓冲在 TransformStream 里，
+   * 所以这里只做「礼节性」等待：超时（或迟迟等不到 FLOW_CREDIT）就继续发送，
+   * 否则一次额度迟到会让整份资源按 64KB × 5s 的速度爬。
+   */
+  /**
+   * 出站总闸门：令牌桶限速 + 单流窗口。
+   * 中转的 WS 是全双工单管道，一次压进去十几兆会把后续小请求堵在缓冲区里
+   * （表现为浏览器侧 504「电脑端响应超时」），所以这里必须自己限速。
+   */
+  async #throttle(streamId: number, window: FlowWindow, bytes: number): Promise<void> {
+    await this.#awaitCredit(streamId, window);
+    for (;;) {
+      const now = Date.now();
+      const elapsed = now - this.#lastRefill;
+      if (elapsed > 0) {
+        this.#tokens = Math.min(2 * 1024 * 1024, this.#tokens + (elapsed * 1024 * 1024) / 1000);
+        this.#lastRefill = now;
+      }
+      if (this.#tokens >= bytes) {
+        this.#tokens -= bytes;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+  }
+
   async #awaitCredit(streamId: number, window: FlowWindow): Promise<void> {
     if (!window.exhausted) return;
+    // 这条流已经等过一次没等到额度：后面整份响应都直接发，别一个分片卡 250ms
+    if (this.#noCreditStreams.has(streamId)) return;
     const waiter = new Promise<void>((resolve) => {
       this.#creditWaiters.set(streamId, resolve);
     });
-    await Promise.race([waiter, new Promise((resolve) => setTimeout(resolve, 5_000))]);
+    const started = Date.now();
+    await Promise.race([waiter, new Promise((resolve) => setTimeout(resolve, 500))]);
+    if (Date.now() - started > 100) {
+      this.#counters.stalls += 1;
+      this.#creditWaiters.delete(streamId);
+      this.#noCreditStreams.add(streamId);
+    }
   }
 
   #error(streamId: number, code: ErrorCode): void {

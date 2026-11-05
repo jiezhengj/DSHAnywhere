@@ -1,7 +1,6 @@
 import {
   BACKOFF_MS,
   FrameType,
-  HEARTBEAT_MS,
   PROTOCOL_VERSION,
   decodeFrame,
   encodeFrame,
@@ -35,7 +34,14 @@ export interface TunnelDeps {
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (handle: unknown) => void;
   random?: () => number;
+  /** 可注入的时钟：心跳活性判定用，测试里替换成虚拟时间 */
+  now?: () => number;
 }
+
+/** 探测间隔：中转收到 PING 会立刻回 PONG，所以「多久没收到任何帧」能反映链路死活 */
+const PING_INTERVAL_MS = 5_000;
+/** 超过这个时间一帧都没收到，就认定链路半开，主动断开重连 */
+const SILENCE_LIMIT_MS = 15_000;
 
 const CLOSE_PROTOCOL_VERSION = 4002;
 const CLOSE_AGENT_ALREADY_CONNECTED = 4003;
@@ -87,6 +93,7 @@ export class AgentTunnel {
     this.#setTimeout = deps.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.#clearTimeout = deps.clearTimeout ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     this.#random = deps.random ?? Math.random;
+    this.#now = deps.now ?? Date.now;
   }
 
   get status(): TunnelStatus {
@@ -133,6 +140,7 @@ export class AgentTunnel {
 
     socket.addEventListener("open", () => {
       this.#attempt = 0;
+      this.#lastFrameAt = this.#now();
       this.#setStatus("connected");
       this.#sendHello(socket);
       this.#startHeartbeat(socket);
@@ -155,7 +163,19 @@ export class AgentTunnel {
       this.#clearHeartbeat();
       if (this.#stopped) return;
       this.#failure = classifyFailure(code, `${ev.reason ?? ""} ${this.#lastError}`);
-      if (code === CLOSE_PROTOCOL_VERSION || code === CLOSE_AGENT_ALREADY_CONNECTED) {
+      if (code === CLOSE_PROTOCOL_VERSION) {
+        this.#setStatus("failed", this.#failure);
+        return;
+      }
+      // 4003 表示中转上还挂着更新的连接（刚重连时旧 socket 还没清掉）。
+      // 重试几次能抢回来；但无限重试会让新旧实例互相顶掉、来回打架，
+      // 所以要设上限，超过就停在这里，由状态页提示用户手动重连。
+      if (code === CLOSE_AGENT_ALREADY_CONNECTED) {
+        this.#takeoverAttempts += 1;
+        if (this.#takeoverAttempts <= 3) {
+          this.#scheduleReconnect();
+          return;
+        }
         this.#setStatus("failed", this.#failure);
         return;
       }
@@ -174,6 +194,7 @@ export class AgentTunnel {
   }
 
   #handleFrame(socket: SocketLike, raw: Uint8Array | ArrayBuffer): void {
+    this.#lastFrameAt = this.#now();
     let frame: Frame;
     try {
       frame = decodeFrame(raw instanceof Uint8Array ? raw : new Uint8Array(raw));
@@ -182,6 +203,8 @@ export class AgentTunnel {
       return;
     }
     if (frame.type === FrameType.RELAY_HELLO_ACK) {
+      // 中转认可了这次连接，才算真的站稳了：此时清空抢回计数
+      this.#takeoverAttempts = 0;
       this.#options.onHelloAck?.(
         JSON.parse(new TextDecoder().decode(frame.payload)) as RelayHelloAck,
       );
@@ -211,11 +234,25 @@ export class AgentTunnel {
   }
 
   #heartbeatHandle: unknown = null;
+  /** 被顶掉后已尝试抢回的次数：用于避免新旧实例互相顶来顶去 */
+  #takeoverAttempts = 0;
+  /** 最近一次收到任何帧的时间：心跳靠它判断链路是不是哑了 */
+  #lastFrameAt = 0;
+  #now: () => number;
 
   #startHeartbeat(socket: SocketLike): void {
     this.#clearHeartbeat();
     this.#heartbeatHandle = this.#setTimeout(() => {
       if (this.#socket !== socket) return;
+      // 只要还有帧回来（PONG 也算）就认为链路活着；两拍都没动静说明是半开连接
+      if (this.#now() - this.#lastFrameAt > SILENCE_LIMIT_MS) {
+        try {
+          socket.close(1011, "heartbeat timeout");
+        } catch {
+          // 关闭失败也照样重连
+        }
+        return;
+      }
       try {
         socket.send(encodeFrame({ type: FrameType.PING, streamId: 0, flags: 0, payload: new Uint8Array() }));
       } catch {
@@ -223,7 +260,7 @@ export class AgentTunnel {
         return;
       }
       this.#startHeartbeat(socket);
-    }, HEARTBEAT_MS);
+    }, PING_INTERVAL_MS);
     this.#timers.add(this.#heartbeatHandle);
   }
 

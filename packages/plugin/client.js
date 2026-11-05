@@ -250,6 +250,13 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const reconnect = async () => {
+        if (!relay.url) return;
+        const res = await act("/relay", { url: relay.url });
+        setNotice(res.ok ? "已重新连接中转" : "重连失败，请检查网络或重新部署中转");
+        void refresh();
+      };
+
       const rotate = async () => {
         const res = await act("/rotate");
         setPair(null);
@@ -325,7 +332,14 @@ window.__ModuleLoader__.load({
                   h("span", { style: S.dot(toneColor) }),
                   h("span", { style: S.cardTitle }, state.text),
                 ),
-                h(Button, { onClick: rotate, disabled: busy }, "轮换链接"),
+                h(
+                  "div",
+                  { style: S.rowInline },
+                  relay.status === "connected"
+                    ? null
+                    : h(Button, { onClick: reconnect, disabled: busy }, "重新连接"),
+                  h(Button, { onClick: rotate, disabled: busy }, "轮换链接"),
+                ),
               ),
               h("div", { style: S.mono }, relay.url),
               h(

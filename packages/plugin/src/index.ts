@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Adapter, ContractViolation } from "./adapter.ts";
 import { AgentTunnel } from "./agent.ts";
 import type { SocketLike, TunnelStatus } from "./agent.ts";
-import { authenticate, readCookie } from "./auth.ts";
+import { authenticate, readCookie, recordSuccess } from "./auth.ts";
 import { parseConfig, isConfigured } from "./config.ts";
 import type { PluginConfig } from "./config.ts";
 import { Gateway } from "./gateway.ts";
@@ -263,6 +263,8 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
     tunnel.start();
   };
 
+  let statsTimer: ReturnType<typeof setTimeout> | null = null;
+
   const gateway = new Gateway({
     loopbackOrigin: activeAdapter.getLoopbackOrigin(),
     mintHostCookie: (force) => activeAdapter.mintHostCookie(force),
@@ -272,6 +274,15 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
       const credential = readCookie(headers, BROWSER_COOKIE);
       const result = authenticate(current, credential);
       if (!result.ok) return result.reason;
+      // 计一次成功请求与设备活跃时间：内存里累加，落盘做防抖，
+      // 否则「今日请求」永远是 0，设备列表也看不出什么时候还在用。
+      current = recordSuccess(current, result.device.id, new Date());
+      if (!statsTimer) {
+        statsTimer = setTimeout(() => {
+          statsTimer = null;
+          void store.save(current);
+        }, 5_000);
+      }
       return "ok";
     },
   });
@@ -297,7 +308,16 @@ export function createRuntime(host: PluginHost, rawConfig: unknown, options: Run
   };
 
   routeDisposers.push(activeAdapter.registerRoute("prefix", "/__anywhere", async (req, res) => {
-    await ready;
+    await ready
+    if (requestPath(req as HostRequestLike) === "/__anywhere/api/trace") {
+      send(
+        res as HostResponseLike,
+        200,
+        { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+        JSON.stringify({ ok: true, trace: gateway.trace(), counters: gateway.counters() }),
+      );
+      return;
+    };
     const path = requestPath(req as HostRequestLike);
     const method = ((req as HostRequestLike).method ?? "GET").toUpperCase();
 
